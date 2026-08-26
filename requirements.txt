@@ -1,0 +1,23 @@
+# Core runtime
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.6
+PyYAML>=6.0
+httpx>=0.27
+websockets>=12
+numpy>=1.26
+
+# Index / retrieval
+sqlite-vec>=0.1.6
+fastembed>=0.7
+
+# Discord voice (DAVE-capable per discordjs/py-cord 2026 reports)
+py-cord[voice]>=2.6
+
+# Audio handling
+soundfile>=0.12 ; platform_system != "Windows"
+
+# Testing
+pytest>=8
+pytest-asyncio>=0.23
+python-multipart

@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DM Copilot</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Familiar</div>
+    <div class="meta">
+      <div class="dm-picker" data-testid="dm-picker">
+        <label for="dm-input">DM:</label>
+        <input id="dm-input" type="text" placeholder="Pick DM..." autocomplete="off" data-testid="dm-input">
+        <div id="dm-dropdown" class="dm-dropdown" data-testid="dm-dropdown"></div>
+      </div>
+      <span id="proj-name" class="proj-name">—</span>
+      <span id="phase-badge" class="phase-badge">idle</span>
+      <span id="conn-dot" class="conn-dot off" data-testid="conn-dot" title="connection"></span>
+      <button id="capture-toggle" class="capture-btn" data-testid="capture-toggle" type="button">● Capture</button>
+      <span id="capture-status" class="capture-status"></span>
+    </div>
+  </header>
+  <main class="grid">
+    <section id="transcript-pane" class="pane transcript" aria-label="transcript"></section>
+    <section id="card-stream" class="pane cards" aria-label="cards"></section>
+  </main>
+  <footer class="querybar">
+    <input id="query-input" data-testid="query-input" type="text" placeholder="Ask the DM copilot..." autocomplete="off" spellcheck="false">
+    <button id="query-send" type="button">Send</button>
+  </footer>
+  <script src="/static/app.js"></script>
+</body>
+</html>

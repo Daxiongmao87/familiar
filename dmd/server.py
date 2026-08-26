@@ -1,0 +1,706 @@
+"""FastAPI app, WebSocket event bus, REST endpoints, and entrypoint.
+
+Duck-typed dependencies so the file imports even before pipeline.py and
+init_pass.py exist; create_app() and main() handle the missing-engine case
+gracefully and serve the UI in degraded mode.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+from dataclasses import asdict, is_dataclass
+from pathlib import Path
+from typing import Any, Awaitable, Callable, Optional
+
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+
+QUEUE_MAX = 512
+
+
+class EventBus:
+    """Per-client asyncio.Queue fan-out with backpressure protection."""
+
+    def __init__(self, max_pending: int = QUEUE_MAX) -> None:
+        self._subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
+        self._max_pending = max_pending
+        self._lock = asyncio.Lock()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._preloop: list[dict[str, Any]] = []
+
+    def attach_loop(self) -> None:
+        """Capture the running loop and flush events buffered before startup."""
+        self._loop = asyncio.get_running_loop()
+        if self._preloop:
+            buffered, self._preloop = self._preloop, []
+            for ev in buffered:
+                asyncio.ensure_future(self.publish(ev))
+
+    def publish_sync(self, event: dict[str, Any]) -> None:
+        """Sync/thread-safe bridge for producers without an event loop handle."""
+        if not isinstance(event, dict):
+            return
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            self._preloop.append(event)
+            return
+        try:
+            loop.call_soon_threadsafe(lambda: asyncio.ensure_future(self.publish(event)))
+        except RuntimeError:
+            self._preloop.append(event)
+
+    async def subscribe(self) -> asyncio.Queue[dict[str, Any]]:
+        q: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=self._max_pending)
+        async with self._lock:
+            self._subscribers.add(q)
+        return q
+
+    async def unsubscribe(self, q: asyncio.Queue[dict[str, Any]]) -> None:
+        async with self._lock:
+            self._subscribers.discard(q)
+
+    async def publish(self, event: dict[str, Any]) -> None:
+        if not isinstance(event, dict):
+            return
+        async with self._lock:
+            subs = list(self._subscribers)
+        for q in subs:
+            if q.qsize() >= self._max_pending:
+                await self._drop_slow(q)
+                continue
+            try:
+                q.put_nowait(event)
+            except asyncio.QueueFull:
+                await self._drop_slow(q)
+
+    async def _drop_slow(self, q: asyncio.Queue[dict[str, Any]]) -> None:
+        async with self._lock:
+            self._subscribers.discard(q)
+        while not q.empty():
+            try:
+                q.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
+
+def _default_status_provider() -> dict[str, Any]:
+    return {
+        "project": "",
+        "indexed_docs": 0,
+        "entities": 0,
+        "tools": 0,
+        "roles": {},
+    }
+
+
+def _card_to_dict(card: Any) -> dict[str, Any]:
+    if isinstance(card, dict):
+        return {
+            "id": str(card.get("id", "")),
+            "kind": str(card.get("kind", "info")),
+            "title": str(card.get("title", "")),
+            "body_md": str(card.get("body_md", "")),
+            "t_context": float(card.get("t_context", 0.0) or 0.0),
+            "meta": dict(card.get("meta") or {}),
+        }
+    if is_dataclass(card):
+        data = asdict(card)
+    else:
+        data = {
+            "id": getattr(card, "id", ""),
+            "kind": getattr(card, "kind", "info"),
+            "title": getattr(card, "title", ""),
+            "body_md": getattr(card, "body_md", ""),
+            "t_context": getattr(card, "t_context", 0.0),
+            "meta": getattr(card, "meta", {}),
+        }
+    return {
+        "id": str(data.get("id", "")),
+        "kind": str(data.get("kind", "info")),
+        "title": str(data.get("title", "")),
+        "body_md": str(data.get("body_md", "")),
+        "t_context": float(data.get("t_context", 0.0) or 0.0),
+        "meta": dict(data.get("meta") or {}),
+    }
+
+
+def create_app(
+    cfg: Any = None,
+    engine: Any = None,
+    init_runner: Any = None,
+    status_provider: Optional[Callable[[], dict[str, Any]]] = None,
+    web_dir: Optional[str | Path] = None,
+    bus: Optional[EventBus] = None,
+    browser_source: Any = None,
+) -> FastAPI:
+    """Build the FastAPI app with optional injected dependencies.
+
+    Pass `bus` when publishing events from externally-wired components
+    (engine.on_event, pool.on_card); otherwise /ws gets a private bus and
+    external publishes go nowhere.
+    """
+    bus = bus or EventBus()
+    provider = status_provider or _default_status_provider
+    web_path = Path(web_dir) if web_dir is not None else Path(__file__).resolve().parent.parent / "web"
+    if not web_path.exists():
+        web_path.mkdir(parents=True, exist_ok=True)
+
+    app = FastAPI(title="DM Copilot", version="0.1.0")
+    if browser_source is not None:
+        try:
+            app.state.browser_source = browser_source
+        except Exception:
+            pass
+
+    @app.on_event("startup")
+    async def _attach_bus_loop() -> None:
+        bus.attach_loop()
+
+    if cfg is not None:
+        try:
+            discord_cfg = getattr(cfg, "discord", None)
+            token = getattr(discord_cfg, "token", None) if discord_cfg else None
+            guild_id = getattr(discord_cfg, "guild_id", None) if discord_cfg else None
+            dm_user_id = getattr(discord_cfg, "dm_user_id", None) if discord_cfg else None
+            if isinstance(token, str) and token.startswith("${") and token.endswith("}"):
+                import os
+
+                token = os.environ.get(token[2:-1])
+            if token and guild_id and dm_user_id:
+                from dmd.speaking_tracker import SpeakingTracker
+                from dmd.voice_presence import VoicePresence
+
+                tracker = SpeakingTracker()
+                app.state.speaking_tracker = tracker
+                presence = VoicePresence(str(token), int(guild_id), int(dm_user_id), tracker)
+                app.state.voice_presence = presence
+
+                @app.on_event("startup")
+                async def _start_voice_presence() -> None:
+                    await presence.start()
+
+                @app.on_event("shutdown")
+                async def _stop_voice_presence() -> None:
+                    await presence.stop()
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("voice presence not started: %s", exc)
+
+    if web_path.exists():
+        try:
+            app.mount("/static", StaticFiles(directory=str(web_path)), name="static")
+        except Exception:
+            pass
+
+    index_file = web_path / "index.html"
+
+    @app.get("/")
+    async def root() -> Any:
+        if index_file.exists():
+            return FileResponse(str(index_file), media_type="text/html")
+        return JSONResponse(
+            {"ok": False, "detail": "index.html missing"},
+            status_code=500,
+        )
+
+    @app.get("/api/status")
+    async def api_status() -> dict[str, Any]:
+        try:
+            data = provider()
+            if not isinstance(data, dict):
+                return _default_status_provider()
+            return data
+        except Exception:
+            return _default_status_provider()
+
+    @app.post("/api/query")
+    async def api_query(req: Request) -> dict[str, Any]:
+        if engine is None:
+            return {"ok": False, "detail": "no engine"}
+        try:
+            payload = await req.json()
+        except Exception:
+            return {"ok": False, "detail": "invalid json"}
+        text = ""
+        if isinstance(payload, dict):
+            text = str(payload.get("text", "") or "")
+        if not text.strip():
+            return {"ok": False, "detail": "empty text"}
+        manual_query = getattr(engine, "manual_query", None)
+        if manual_query is None:
+            return {"ok": False, "detail": "no engine"}
+        try:
+            await manual_query(text)
+            return {"ok": True}
+        except Exception as exc:
+            return {"ok": False, "detail": f"error:{type(exc).__name__}"}
+
+    @app.post("/api/init")
+    async def api_init(req: Request) -> dict[str, Any]:
+        if init_runner is None:
+            return {"ok": False, "detail": "no init runner"}
+        try:
+            payload = await req.json()
+        except Exception:
+            return {"ok": False, "detail": "invalid json"}
+        path = ""
+        if isinstance(payload, dict):
+            path = str(payload.get("path", "") or "")
+        if not path.strip():
+            return {"ok": False, "detail": "empty path"}
+        run_init = getattr(init_runner, "run_init", None)
+        if run_init is None:
+            return {"ok": False, "detail": "no init runner"}
+
+        async def _progress(stage: Any) -> None:
+            await bus.publish({"type": "init_progress", "stage": str(stage)})
+
+        async def _run() -> None:
+            try:
+                await run_init(path, progress_cb=_progress)
+            except Exception as exc:
+                await bus.publish(
+                    {
+                        "type": "init_progress",
+                        "stage": f"error:{type(exc).__name__}",
+                    }
+                )
+
+        asyncio.create_task(_run())
+        return {"ok": True}
+
+    @app.get("/api/guild/members")
+    async def api_guild_members() -> dict[str, Any]:
+        if cfg is None:
+            return {"ok": False, "detail": "no config", "members": []}
+        discord_cfg = getattr(cfg, "discord", None)
+        token = getattr(discord_cfg, "token", None) if discord_cfg else None
+        guild_id = getattr(discord_cfg, "guild_id", None) if discord_cfg else None
+        if not token or not guild_id:
+            return {"ok": False, "detail": "discord not configured", "members": []}
+        if isinstance(token, str) and token.startswith("${") and token.endswith("}"):
+            import os
+
+            token = os.environ.get(token[2:-1])
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    f"https://discord.com/api/v10/guilds/{guild_id}/members",
+                    headers={"Authorization": f"Bot {token}"},
+                    params={"limit": "1000"},
+                )
+                if resp.status_code != 200:
+                    return {"ok": False, "detail": f"discord {resp.status_code}", "members": []}
+                raw = resp.json()
+                members = []
+                for m in raw if isinstance(raw, list) else []:
+                    user = m.get("user") or {}
+                    members.append(
+                        {
+                            "id": str(user.get("id", "")),
+                            "username": str(user.get("username", "")),
+                            "display_name": str(m.get("nick") or user.get("global_name") or user.get("username") or ""),
+                            "avatar": str(user.get("avatar") or ""),
+                        }
+                    )
+                return {"ok": True, "members": members}
+        except Exception as exc:
+            return {"ok": False, "detail": f"{type(exc).__name__}", "members": []}
+
+    @app.get("/api/config/dm")
+    async def api_get_dm() -> dict[str, Any]:
+        if cfg is None:
+            return {"ok": False, "dm_user_id": None}
+        discord_cfg = getattr(cfg, "discord", None)
+        dm = getattr(discord_cfg, "dm_user_id", None) if discord_cfg else None
+        return {"ok": True, "dm_user_id": dm}
+
+    @app.post("/api/config/dm")
+    async def api_set_dm(req: Request) -> dict[str, Any]:
+        if cfg is None:
+            return {"ok": False, "detail": "no config"}
+        try:
+            payload = await req.json()
+        except Exception:
+            return {"ok": False, "detail": "invalid json"}
+        dm_id = payload.get("dm_user_id")
+        if dm_id is not None and not isinstance(dm_id, str):
+            dm_id = str(dm_id)
+        if dm_id is not None:
+            dm_id = dm_id.strip() or None
+            if dm_id is not None and not dm_id.isdigit():
+                # treat as username — try to resolve via guild members
+                discord_cfg = getattr(cfg, "discord", None)
+                token = getattr(discord_cfg, "token", None) if discord_cfg else None
+                guild_id = getattr(discord_cfg, "guild_id", None) if discord_cfg else None
+                if token and guild_id:
+                    try:
+                        import httpx
+
+                        async with httpx.AsyncClient(timeout=10.0) as client:
+                            resp = await client.get(
+                                f"https://discord.com/api/v10/guilds/{guild_id}/members",
+                                headers={"Authorization": f"Bot {token}"},
+                                params={"limit": "1000"},
+                            )
+                            if resp.status_code == 200:
+                                for m in resp.json():
+                                    user = m.get("user") or {}
+                                    if str(user.get("username", "")).lower() == dm_id.lower() or str(
+                                        m.get("nick") or ""
+                                    ).lower() == dm_id.lower():
+                                        dm_id = str(user.get("id"))
+                                        break
+                    except Exception:
+                        pass
+        try:
+            cfg.discord.dm_user_id = dm_id  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        try:
+            import yaml
+
+            config_path = getattr(cfg, "_config_path", None) or "config.yaml"
+            raw_path = str(getattr(cfg, "_config_path", None) or "config.yaml")
+            p = Path(raw_path)
+            if not p.exists():
+                p = Path("config.yaml")
+            if p.exists():
+                raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+                if "discord" not in raw:
+                    raw["discord"] = {}
+                raw["discord"]["dm_user_id"] = dm_id
+                p.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+        except Exception:
+            pass
+        return {"ok": True, "dm_user_id": dm_id}
+
+    @app.websocket("/ws")
+    async def ws_endpoint(websocket: WebSocket) -> None:
+        await websocket.accept()
+        q = await bus.subscribe()
+        try:
+            while True:
+                try:
+                    event = await q.get()
+                except asyncio.CancelledError:
+                    break
+                try:
+                    await websocket.send_text(json.dumps(event, ensure_ascii=False))
+                except Exception:
+                    break
+        except WebSocketDisconnect:
+            pass
+        finally:
+            await bus.unsubscribe(q)
+            try:
+                await websocket.close()
+            except Exception:
+                pass
+
+    @app.websocket("/ws/audio")
+    async def ws_audio(websocket: WebSocket) -> None:
+        await websocket.accept()
+        browser_source = getattr(app.state, "browser_source", None)
+        if browser_source is None:
+            try:
+                from dmd.sources.browser import BrowserAudioSource
+
+                browser_source = BrowserAudioSource()
+                app.state.browser_source = browser_source
+            except Exception:
+                await websocket.close(code=1011)
+                return
+        try:
+            while True:
+                msg = await websocket.receive()
+                data = msg.get("bytes")
+                if data is not None:
+                    browser_source.push_chunk(bytes(data))
+                elif "text" in msg and msg["text"] is not None:
+                    try:
+                        import base64
+
+                        raw = base64.b64decode(msg["text"])
+                        browser_source.push_chunk(raw)
+                    except Exception:
+                        pass
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            pass
+
+    return app
+
+
+def _build_status_provider(
+    cfg: Any,
+    store: Any,
+    gateway: Any,
+) -> Callable[[], dict[str, Any]]:
+    def _snapshot() -> dict[str, Any]:
+        project = ""
+        if cfg is not None:
+            project = str(getattr(getattr(cfg, "project", None), "name", "") or "")
+        indexed_docs = 0
+        entities = 0
+        tools = 0
+        if store is not None:
+            try:
+                counts = store.counts()
+                indexed_docs = int(counts.get("docs", 0))
+                entities = int(counts.get("entities", 0))
+            except Exception:
+                indexed_docs = 0
+                entities = 0
+        roles: dict[str, bool] = {}
+        if gateway is not None:
+            for role in ("synthesis", "fast", "vision", "stt"):
+                try:
+                    ep = gateway._resolve(role)
+                    roles[role] = bool(getattr(ep, "base_url", None))
+                except Exception:
+                    roles[role] = False
+        else:
+            roles = {"synthesis": False, "fast": False, "vision": False, "stt": False}
+        return {
+            "project": project,
+            "indexed_docs": indexed_docs,
+            "entities": entities,
+            "tools": tools,
+            "roles": roles,
+        }
+
+    return _snapshot
+
+
+def _make_init_runner(
+    cfg: Any,
+    store: Any,
+    gateway: Any,
+    embedder: Any,
+    lexicon_entries: Any,
+) -> Any:
+    try:
+        from dmd.init_pass import run_init as _run_init
+
+        class _Runner:
+            async def run_init(
+                self,
+                path: str,
+                progress_cb: Optional[Callable[[str], Awaitable[None]]] = None,
+            ) -> dict[str, Any]:
+                return await _run_init(
+                    path=path,
+                    cfg=cfg,
+                    store=store,
+                    gateway=gateway,
+                    embedder=embedder,
+                    lexicon_entries=lexicon_entries,
+                    progress_cb=progress_cb,
+                )
+
+        return _Runner()
+    except Exception:
+        return None
+
+
+def _make_engine(
+    cfg: Any,
+    store: Any,
+    gateway: Any,
+    embedder: Any,
+    lexicon_entries: Any,
+    pool: Any,
+    bus: EventBus,
+) -> Any:
+    try:
+        from dmd.pipeline import SessionEngine
+
+        def _on_event(event: dict[str, Any]) -> None:
+            bus.publish_sync(event)
+
+        engine = SessionEngine(
+            cfg=cfg,
+            store=store,
+            gw=gateway,
+            entries=lexicon_entries,
+            embedder=embedder,
+            pool=pool,
+            on_event=_on_event,
+        )
+        return engine
+    except Exception:
+        return None
+
+
+def _make_pool(cfg: Any, bus: EventBus) -> Any:
+    try:
+        from dmd.orchestrator import JobPool
+
+        orch_cfg = getattr(cfg, "orchestration", None)
+        max_concurrent = int(getattr(orch_cfg, "max_concurrent", 3) or 3)
+        job_timeout_s = float(getattr(orch_cfg, "job_timeout_s", 20.0) or 20.0)
+        stale_after_s = float(getattr(orch_cfg, "stale_after_s", 120.0) or 120.0)
+
+        async def _on_card(card: Any) -> None:
+            await bus.publish({"type": "card", "card": _card_to_dict(card)})
+
+        return JobPool(
+            max_concurrent=max_concurrent,
+            job_timeout_s=job_timeout_s,
+            stale_after_s=stale_after_s,
+            on_card=_on_card,
+        )
+    except Exception:
+        return None
+
+
+def main(config_path: str) -> None:
+    """Entry point: build app with real or degraded dependencies, then serve."""
+    cfg: Any = None
+    store: Any = None
+    gateway: Any = None
+    embedder: Any = None
+    lexicon_entries: Any = []
+    pool: Any = None
+    engine: Any = None
+    init_runner: Any = None
+    bus = EventBus()
+
+    try:
+        from dmd.config import load_config
+
+        cfg = load_config(config_path)
+        try:
+            object.__setattr__(cfg, "_config_path", config_path)
+        except Exception:
+            pass
+    except Exception:
+        cfg = None
+
+    if cfg is not None:
+        project = getattr(cfg, "project", None)
+        project_path = getattr(project, "path", None) if project else None
+        if project_path:
+            db_dir = Path(project_path) / ".dmd"
+        else:
+            db_dir = Path.cwd() / "data"
+        db_dir.mkdir(parents=True, exist_ok=True)
+        db_path = str(db_dir / "index.db")
+
+        try:
+            from dmd.index_store import IndexStore
+
+            store = IndexStore(db_path)
+        except Exception:
+            store = None
+
+        try:
+            from dmd.gateway import Gateway
+
+            gateway = Gateway(cfg)
+        except Exception:
+            gateway = None
+
+        try:
+            from dmd.embedder import Embedder
+
+            emb_cfg = getattr(cfg.models, "embeddings", None)
+            model_id = getattr(emb_cfg, "model_id", "BAAI/bge-small-en-v1.5") or "BAAI/bge-small-en-v1.5"
+            embedder = Embedder(model_id=model_id)
+        except Exception:
+            embedder = None
+
+        if store is not None:
+            try:
+                from dmd.lexicon import build_lexicon
+
+                lexicon_entries = build_lexicon(store.all_entities())
+            except Exception:
+                lexicon_entries = []
+
+    pool = _make_pool(cfg, bus)
+    engine = _make_engine(cfg, store, gateway, embedder, lexicon_entries, pool, bus)
+    init_runner = _make_init_runner(cfg, store, gateway, embedder, lexicon_entries)
+    status_provider = _build_status_provider(cfg, store, gateway)
+
+    try:
+        from dmd.sources.browser import BrowserAudioSource
+
+        browser_source = BrowserAudioSource()
+    except Exception:
+        browser_source = None
+
+    app = create_app(
+        cfg=cfg,
+        engine=engine,
+        init_runner=init_runner,
+        status_provider=status_provider,
+        browser_source=browser_source,
+    )
+
+    if browser_source is not None and engine is not None:
+        try:
+            consume = getattr(engine, "consume_source", None)
+            if callable(consume):
+                async def _browser_consumer() -> None:
+                    try:
+                        await consume(browser_source)
+                    except Exception as exc:
+                        import logging
+
+                        logging.getLogger(__name__).warning("browser consumer ended: %s", exc)
+
+                @app.on_event("startup")
+                async def _start_browser_consumer() -> None:
+                    import asyncio
+
+                    asyncio.create_task(_browser_consumer())
+
+        except Exception:
+            pass
+
+    host = os.environ.get("DMD_HOST", getattr(getattr(cfg, "server", None), "host", "0.0.0.0") or "0.0.0.0") if cfg else os.environ.get("DMD_HOST", "0.0.0.0")
+    port = int(os.environ.get("DMD_PORT", str(getattr(getattr(cfg, "server", None), "port", 8760) or 8760)) or 8760)
+    use_https = bool(getattr(getattr(cfg, "server", None), "https_enabled", False)) if cfg else False
+    cert_file = getattr(getattr(cfg, "server", None), "cert_file", None) if cfg else None
+    key_file = getattr(getattr(cfg, "server", None), "key_file", None) if cfg else None
+
+    try:
+        import uvicorn
+
+        if use_https and cert_file and key_file:
+            uvicorn.run(app, host=host, port=port, log_level="info", ssl_certfile=str(cert_file), ssl_keyfile=str(key_file))
+        else:
+            if use_https:
+                import logging
+
+                logging.getLogger(__name__).warning("server.https_enabled true but cert_file/key_file missing — falling back to http")
+            uvicorn.run(app, host=host, port=port, log_level="info")
+    finally:
+        if gateway is not None:
+            try:
+                import asyncio
+
+                loop = asyncio.new_event_loop()
+                try:
+                    loop.run_until_complete(gateway.aclose())
+                finally:
+                    loop.close()
+            except Exception:
+                pass
+
+
+if __name__ == "__main__":
+    import sys
+
+    config_arg = sys.argv[1] if len(sys.argv) > 1 else "config.yaml"
+    main(config_arg)

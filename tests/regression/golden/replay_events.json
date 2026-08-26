@@ -1,0 +1,50 @@
+[
+  {
+    "t": 1.0,
+    "text": "I search the body",
+    "type": "transcript",
+    "user_id": "dm"
+  },
+  {
+    "card": {
+      "body_md": "| Skill | DC |\n|---|---|\n| Investigation | 12 |\n| Perception | 14 |",
+      "id": "card-0",
+      "kind": "skill_table",
+      "meta": {
+        "entities": [],
+        "sources": [
+          "items/scouts_pouch.md",
+          "locations/ashforge.md",
+          "npcs/vexahlia.md"
+        ]
+      },
+      "t_context": 0.0,
+      "title": "Loot Table \u2014 Fallen Scout"
+    },
+    "type": "card"
+  },
+  {
+    "t": 2.0,
+    "text": "never mind, rough luck there",
+    "type": "transcript",
+    "user_id": "alice"
+  },
+  {
+    "card": {
+      "body_md": "**Grappled** (SRD 5.1): speed becomes 0.",
+      "id": "card-1",
+      "kind": "rules",
+      "meta": {
+        "entities": [],
+        "sources": [
+          "items/scouts_pouch.md",
+          "locations/ashforge.md",
+          "npcs/vexahlia.md"
+        ]
+      },
+      "t_context": 0.0,
+      "title": "Rules \u2014 Grappled"
+    },
+    "type": "card"
+  }
+]

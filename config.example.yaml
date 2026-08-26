@@ -1,0 +1,55 @@
+# Voice Chat DM Assistant — canonical configuration.
+# Copy to config.yaml. Every AI endpoint is role-based; no model names in code.
+
+server:
+  host: 0.0.0.0
+  port: 8760
+  https_enabled: false          # true → serve on https:// (needs cert_file/key_file)
+  cert_file: null               # e.g. ./certs/fullchain.pem  (mkcert or Let's Encrypt)
+  key_file: null                # e.g. ./certs/privkey.pem
+
+project:
+  path: ./my-campaign            # worldbuilding folder to index
+  name: My Campaign
+
+models:
+  synthesis:                     # REQUIRED: cards, enrichment, scene summaries
+    base_url: http://localhost:8081/v1
+    api_key: ${LLM_API_KEY}      # optional; ${VAR} expanded from environment
+    model_id: ornith-ai/ornith-1.5-35b
+    extra_body: {}               # free-form JSON injected verbatim into request body
+  fast:                          # optional: per-utterance classification
+    base_url: http://localhost:8081/v1
+    api_key: ${LLM_API_KEY}
+    model_id: empero-ai/qwen3.8-4b
+    extra_body: { enable_thinking: false }
+  vision:                        # optional: init-time image captioning
+    # base_url: ...
+    # api_key: ...
+    # model_id: ...
+    enabled: false
+  stt:                           # OpenAI /v1/audio/transcriptions dialect
+    base_url: http://localhost:8081/v1
+    api_key: ${LLM_API_KEY}
+    extra_body: {}
+  embeddings:
+    provider: local              # local | endpoint
+    model_id: BAAI/bge-small-en-v1.5
+
+orchestration:
+  max_concurrent: 3              # keep <= backend --parallel slots
+  job_timeout_s: 20
+
+stt_pipeline:
+  sample_rate: 16000             # transcription target rate
+  silence_ms: 700                # end-of-utterance threshold
+  min_utterance_ms: 400
+  max_chunk_s: 25
+
+discord:
+  token: ${DISCORD_TOKEN}
+  guild_id: "000000000000000000"   # the server; Familiar follows the DM within it
+  dm_user_id: "000000000000000000" # your Discord user ID — Familiar joins your VC
+  channel_id: null                 # optional: pin a specific voice channel
+  self_mute: true
+  self_deaf: false                 # MUST be false to receive audio
