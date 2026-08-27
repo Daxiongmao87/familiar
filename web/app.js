@@ -514,4 +514,137 @@
       }
     });
   }
+
+  // --- Settings panel (edit + save config.yaml via /api/config) ---
+  const S = {
+    project_path: 'cfg-project-path', project_name: 'cfg-project-name',
+    d_token: 'cfg-discord-token', d_guild: 'cfg-discord-guild', d_dm: 'cfg-discord-dm',
+    d_channel: 'cfg-discord-channel', d_mute: 'cfg-discord-mute', d_deaf: 'cfg-discord-deaf',
+    syn_base: 'cfg-syn-base', syn_model: 'cfg-syn-model', syn_key: 'cfg-syn-key', syn_extra: 'cfg-syn-extra',
+    fast_base: 'cfg-fast-base', fast_model: 'cfg-fast-model', fast_key: 'cfg-fast-key', fast_extra: 'cfg-fast-extra',
+    stt_base: 'cfg-stt-base', stt_dialect: 'cfg-stt-dialect', stt_key: 'cfg-stt-key', stt_extra: 'cfg-stt-extra',
+    emb_provider: 'cfg-emb-provider', emb_model: 'cfg-emb-model', emb_key: 'cfg-emb-key',
+    ag_timeout: 'cfg-agent-timeout', ag_max: 'cfg-agent-maxcalls', ag_eph: 'cfg-agent-ephcalls',
+    ag_web: 'cfg-agent-webtimeout', ag_cad: 'cfg-agent-cadence', ag_look: 'cfg-agent-lookback', ag_cards: 'cfg-agent-cardkinds',
+    orch_conc: 'cfg-orch-conc', orch_job: 'cfg-orch-jobtimeout', orch_stale: 'cfg-orch-stale',
+    stt_rate: 'cfg-stt-rate', stt_sil: 'cfg-stt-silence', stt_min: 'cfg-stt-minutter', stt_max: 'cfg-stt-maxchunk',
+  };
+
+  function setSettingsStatus(msg, isError) {
+    const el = document.getElementById('settings-status');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.className = isError ? 'status-error' : '';
+  }
+
+  async function loadSettings() {
+    setSettingsStatus('Loading\u2026', false);
+    try {
+      const r = await fetch('/api/config');
+      const data = await r.json();
+      if (!data || !data.ok) throw new Error((data && data.detail) || 'failed to load config');
+      const c = data.config || {};
+      const p = c.project || {}, d = c.discord || {}, m = c.models || {};
+      const a = c.agent || {}, o = c.orchestration || {}, sp = c.stt_pipeline || {};
+      const sy = m.synthesis || {}, fa = m.fast || {}, st = m.stt || {}, em = m.embeddings || {};
+      const set = (id, v) => { const el = document.getElementById(S[id]); if (el) el.value = (v == null ? '' : v); };
+      const setSecret = (id, v) => {
+        const el = document.getElementById(S[id]);
+        if (!el) return;
+        const masked = v === '__MASKED__';
+        el.value = masked ? '' : (v == null ? '' : v);
+        el.setAttribute('data-was-masked', masked ? 'true' : 'false');
+      };
+      const setExtra = (id, v) => { const el = document.getElementById(S[id]); if (el) el.value = (v && Object.keys(v).length) ? JSON.stringify(v, null, 2) : '{}'; };
+      const setNum = (id, v) => { const el = document.getElementById(S[id]); if (el && v != null) el.value = v; };
+      const setCheck = (id, v) => { const el = document.getElementById(S[id]); if (el) el.checked = !!v; };
+
+      set('project_path', p.path); set('project_name', p.name);
+      setSecret('d_token', d.token); set('d_guild', d.guild_id); set('d_dm', d.dm_user_id); set('d_channel', d.channel_id);
+      setCheck('d_mute', d.self_mute); setCheck('d_deaf', d.self_deaf);
+      set('syn_base', sy.base_url); set('syn_model', sy.model_id); setSecret('syn_key', sy.api_key); setExtra('syn_extra', sy.extra_body);
+      set('fast_base', fa.base_url); set('fast_model', fa.model_id); setSecret('fast_key', fa.api_key); setExtra('fast_extra', fa.extra_body);
+      set('stt_base', st.base_url); set('stt_dialect', st.dialect || 'openai'); setSecret('stt_key', st.api_key); setExtra('stt_extra', st.extra_body);
+      set('emb_provider', em.provider || 'local'); set('emb_model', em.model_id); setSecret('emb_key', em.api_key);
+      setNum('ag_timeout', a.agent_timeout_s); setNum('ag_max', a.max_tool_calls); setNum('ag_eph', a.ephemeral_max_tool_calls);
+      setNum('ag_web', a.web_timeout_s); setNum('ag_cad', a.monitor_cadence_s); setNum('ag_look', a.monitor_lookback);
+      if (Array.isArray(a.card_kinds)) set('ag_cards', a.card_kinds.join(', '));
+      setNum('orch_conc', o.max_concurrent); setNum('orch_job', o.job_timeout_s); setNum('orch_stale', o.stale_after_s);
+      setNum('stt_rate', sp.sample_rate); setNum('stt_sil', sp.silence_ms); setNum('stt_min', sp.min_utterance_ms); setNum('stt_max', sp.max_chunk_s);
+      setSettingsStatus('', false);
+    } catch (e) {
+      setSettingsStatus('Load failed: ' + e.message, true);
+    }
+  }
+
+  function collectConfig() {
+    const get = (id) => { const el = document.getElementById(S[id]); return el ? el.value : ''; };
+    const getNum = (id) => { const v = get(id); if (v == null || v === '') return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
+    const getCheck = (id) => { const el = document.getElementById(S[id]); return el ? el.checked : false; };
+    const getSecret = (id) => {
+      const el = document.getElementById(S[id]);
+      if (!el) return '__MASKED__';
+      if (el.value === '' && el.getAttribute('data-was-masked') === 'true') return '__MASKED__';
+      return el.value || null;
+    };
+    const getExtra = (id) => {
+      const el = document.getElementById(S[id]);
+      if (!el) return {};
+      const txt = (el.value || '').trim();
+      if (!txt || txt === '{}') return {};
+      try { return JSON.parse(txt); } catch (e) { setSettingsStatus('Invalid JSON in extra_body: ' + e.message, true); return null; }
+    };
+    const synExtra = getExtra('syn_extra'); if (synExtra === null) return null;
+    const fastExtra = getExtra('fast_extra'); if (fastExtra === null) return null;
+    const sttExtra = getExtra('stt_extra'); if (sttExtra === null) return null;
+    const cards = (get('ag_cards') || '').split(',').map((x) => x.trim()).filter(Boolean);
+    return {
+      config: {
+        project: { path: get('project_path') || null, name: get('project_name') || 'Untitled Campaign' },
+        discord: {
+          token: getSecret('d_token'), guild_id: get('d_guild') || null, dm_user_id: get('d_dm') || null,
+          channel_id: get('d_channel') || null, self_mute: getCheck('d_mute'), self_deaf: getCheck('d_deaf'),
+        },
+        models: {
+          synthesis: { base_url: get('syn_base') || null, model_id: get('syn_model') || null, api_key: getSecret('syn_key'), extra_body: synExtra },
+          fast: { base_url: get('fast_base') || null, model_id: get('fast_model') || null, api_key: getSecret('fast_key'), extra_body: fastExtra },
+          stt: { base_url: get('stt_base') || null, dialect: get('stt_dialect') || 'openai', api_key: getSecret('stt_key'), extra_body: sttExtra },
+          embeddings: { provider: get('emb_provider') || 'local', model_id: get('emb_model') || null, api_key: getSecret('emb_key') },
+        },
+        agent: {
+          agent_timeout_s: getNum('ag_timeout'), max_tool_calls: getNum('ag_max'), ephemeral_max_tool_calls: getNum('ag_eph'),
+          web_timeout_s: getNum('ag_web'), monitor_cadence_s: getNum('ag_cad'), monitor_lookback: getNum('ag_look'), card_kinds: cards,
+        },
+        orchestration: { max_concurrent: getNum('orch_conc'), job_timeout_s: getNum('orch_job'), stale_after_s: getNum('orch_stale') },
+        stt_pipeline: { sample_rate: getNum('stt_rate'), silence_ms: getNum('stt_sil'), min_utterance_ms: getNum('stt_min'), max_chunk_s: getNum('stt_max') },
+      },
+    };
+  }
+
+  const settingsBtn = document.getElementById('settings-btn');
+  const settingsModal = document.getElementById('settings-modal');
+  const settingsClose = document.getElementById('settings-close');
+  const settingsSave = document.getElementById('settings-save');
+  const openSettings = () => { if (settingsModal) { settingsModal.classList.add('open'); loadSettings(); } };
+  const closeSettings = () => { if (settingsModal) settingsModal.classList.remove('open'); };
+  if (settingsBtn) settingsBtn.addEventListener('click', openSettings);
+  if (settingsClose) settingsClose.addEventListener('click', closeSettings);
+  if (settingsModal) settingsModal.addEventListener('click', (e) => { if (e.target === settingsModal) closeSettings(); });
+  if (settingsSave) settingsSave.addEventListener('click', async () => {
+    const payload = collectConfig();
+    if (!payload) return;
+    setSettingsStatus('Saving\u2026', false);
+    try {
+      const r = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await r.json();
+      if (data && data.ok) {
+        const changed = data.changed || [];
+        setSettingsStatus(changed.length ? ('Saved. Restart the server to apply: ' + changed.join(', ')) : 'Saved.', false);
+      } else {
+        setSettingsStatus('Save failed: ' + ((data && data.detail) || 'unknown'), true);
+      }
+    } catch (e) {
+      setSettingsStatus('Save failed: ' + e.message, true);
+    }
+  });
 })();

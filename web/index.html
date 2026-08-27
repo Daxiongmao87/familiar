@@ -20,6 +20,7 @@
       <span id="conn-dot" class="conn-dot off" data-testid="conn-dot" title="connection"></span>
       <button id="capture-toggle" class="capture-btn" data-testid="capture-toggle" type="button">● Capture</button>
       <span id="capture-status" class="capture-status"></span>
+      <button id="settings-btn" class="settings-btn" data-testid="settings-btn" type="button" title="Settings">&#9881;</button>
     </div>
   </header>
   <main class="grid">
@@ -30,6 +31,106 @@
     <input id="query-input" data-testid="query-input" type="text" placeholder="Ask the DM copilot..." autocomplete="off" spellcheck="false">
     <button id="query-send" type="button">Send</button>
   </footer>
+  <div id="settings-modal" data-testid="settings-modal">
+    <div id="settings-panel">
+      <div class="settings-head">
+        <h2>Settings</h2>
+        <button id="settings-close" data-testid="settings-close" type="button" title="Close">&times;</button>
+      </div>
+      <div class="settings-body">
+        <details open data-testid="sec-campaign">
+          <summary>Campaign</summary>
+          <div class="field-grid">
+            <div class="field"><label>Worldbuilding folder (server path)</label><input id="cfg-project-path" data-testid="cfg-project-path" type="text" placeholder="./my-campaign"></div>
+            <div class="field"><label>Campaign name</label><input id="cfg-project-name" data-testid="cfg-project-name" type="text" placeholder="My Campaign"></div>
+          </div>
+        </details>
+        <details open data-testid="sec-discord">
+          <summary>Discord</summary>
+          <div class="field-grid">
+            <div class="field"><label>Bot token</label><input id="cfg-discord-token" data-testid="cfg-discord-token" type="password" autocomplete="off" placeholder="blank = keep current"></div>
+            <div class="field"><label>Server (guild) ID</label><input id="cfg-discord-guild" data-testid="cfg-discord-guild" type="text"></div>
+            <div class="field"><label>DM user ID</label><input id="cfg-discord-dm" data-testid="cfg-discord-dm" type="text" placeholder="your Discord user ID"></div>
+            <div class="field"><label>Channel ID (optional)</label><input id="cfg-discord-channel" data-testid="cfg-discord-channel" type="text"></div>
+            <div class="field checkbox"><label><input id="cfg-discord-mute" data-testid="cfg-discord-mute" type="checkbox"> self-mute</label></div>
+            <div class="field checkbox"><label><input id="cfg-discord-deaf" data-testid="cfg-discord-deaf" type="checkbox"> self-deaf (must be off to hear audio)</label></div>
+          </div>
+        </details>
+        <details open data-testid="sec-models">
+          <summary>Models</summary>
+          <div class="model-role">
+            <h3>Synthesis (cards, enrichment)</h3>
+            <div class="field-grid">
+              <div class="field"><label>Base URL</label><input id="cfg-syn-base" data-testid="cfg-syn-base" type="text"></div>
+              <div class="field"><label>Model ID</label><input id="cfg-syn-model" data-testid="cfg-syn-model" type="text"></div>
+              <div class="field"><label>API key</label><input id="cfg-syn-key" data-testid="cfg-syn-key" type="password" autocomplete="off" placeholder="blank = keep current"></div>
+              <div class="field wide"><label>Extra body (JSON)</label><textarea id="cfg-syn-extra" data-testid="cfg-syn-extra" rows="2" spellcheck="false"></textarea></div>
+            </div>
+          </div>
+          <div class="model-role">
+            <h3>Fast (classification, ephemeral)</h3>
+            <div class="field-grid">
+              <div class="field"><label>Base URL</label><input id="cfg-fast-base" data-testid="cfg-fast-base" type="text"></div>
+              <div class="field"><label>Model ID</label><input id="cfg-fast-model" data-testid="cfg-fast-model" type="text"></div>
+              <div class="field"><label>API key</label><input id="cfg-fast-key" data-testid="cfg-fast-key" type="password" autocomplete="off" placeholder="blank = keep current"></div>
+              <div class="field wide"><label>Extra body (JSON)</label><textarea id="cfg-fast-extra" data-testid="cfg-fast-extra" rows="2" spellcheck="false"></textarea></div>
+            </div>
+          </div>
+          <div class="model-role">
+            <h3>STT (transcription)</h3>
+            <div class="field-grid">
+              <div class="field"><label>Base URL</label><input id="cfg-stt-base" data-testid="cfg-stt-base" type="text"></div>
+              <div class="field"><label>Dialect</label><select id="cfg-stt-dialect" data-testid="cfg-stt-dialect"><option value="openai">openai</option><option value="whisperx">whisperx</option></select></div>
+              <div class="field"><label>API key</label><input id="cfg-stt-key" data-testid="cfg-stt-key" type="password" autocomplete="off" placeholder="blank = keep current"></div>
+              <div class="field wide"><label>Extra body (JSON)</label><textarea id="cfg-stt-extra" data-testid="cfg-stt-extra" rows="2" spellcheck="false"></textarea></div>
+            </div>
+          </div>
+          <div class="model-role">
+            <h3>Embeddings</h3>
+            <div class="field-grid">
+              <div class="field"><label>Provider</label><select id="cfg-emb-provider" data-testid="cfg-emb-provider"><option value="local">local</option><option value="endpoint">endpoint</option></select></div>
+              <div class="field"><label>Model ID</label><input id="cfg-emb-model" data-testid="cfg-emb-model" type="text"></div>
+              <div class="field"><label>API key</label><input id="cfg-emb-key" data-testid="cfg-emb-key" type="password" autocomplete="off" placeholder="blank = keep current"></div>
+            </div>
+          </div>
+        </details>
+        <details data-testid="sec-agent">
+          <summary>Agent</summary>
+          <div class="field-grid">
+            <div class="field"><label>Timeout (s)</label><input id="cfg-agent-timeout" data-testid="cfg-agent-timeout" type="number" step="1"></div>
+            <div class="field"><label>Max tool calls</label><input id="cfg-agent-maxcalls" data-testid="cfg-agent-maxcalls" type="number"></div>
+            <div class="field"><label>Ephemeral max tool calls</label><input id="cfg-agent-ephcalls" data-testid="cfg-agent-ephcalls" type="number"></div>
+            <div class="field"><label>Web timeout (s)</label><input id="cfg-agent-webtimeout" data-testid="cfg-agent-webtimeout" type="number"></div>
+            <div class="field"><label>Monitor cadence (s)</label><input id="cfg-agent-cadence" data-testid="cfg-agent-cadence" type="number"></div>
+            <div class="field"><label>Monitor lookback</label><input id="cfg-agent-lookback" data-testid="cfg-agent-lookback" type="number"></div>
+            <div class="field wide"><label>Card kinds (comma-separated)</label><input id="cfg-agent-cardkinds" data-testid="cfg-agent-cardkinds" type="text"></div>
+          </div>
+        </details>
+        <details data-testid="sec-orch">
+          <summary>Orchestration</summary>
+          <div class="field-grid">
+            <div class="field"><label>Max concurrent</label><input id="cfg-orch-conc" data-testid="cfg-orch-conc" type="number"></div>
+            <div class="field"><label>Job timeout (s)</label><input id="cfg-orch-jobtimeout" data-testid="cfg-orch-jobtimeout" type="number"></div>
+            <div class="field"><label>Stale after (s)</label><input id="cfg-orch-stale" data-testid="cfg-orch-stale" type="number"></div>
+          </div>
+        </details>
+        <details data-testid="sec-stt">
+          <summary>STT pipeline</summary>
+          <div class="field-grid">
+            <div class="field"><label>Sample rate (Hz)</label><input id="cfg-stt-rate" data-testid="cfg-stt-rate" type="number"></div>
+            <div class="field"><label>Silence (ms)</label><input id="cfg-stt-silence" data-testid="cfg-stt-silence" type="number"></div>
+            <div class="field"><label>Min utterance (ms)</label><input id="cfg-stt-minutter" data-testid="cfg-stt-minutter" type="number"></div>
+            <div class="field"><label>Max chunk (s)</label><input id="cfg-stt-maxchunk" data-testid="cfg-stt-maxchunk" type="number"></div>
+          </div>
+        </details>
+      </div>
+      <div class="settings-foot">
+        <span id="settings-status" data-testid="settings-status"></span>
+        <button id="settings-save" data-testid="settings-save" type="button">Save</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/static/app.js"></script>
 </body>
 </html>
