@@ -10,37 +10,16 @@ import uuid
 from collections import deque
 from typing import Any, Callable, Optional
 
-import numpy as np
-
+from .agent import AgentResult, WorkerAgent
 from .config import AppConfig
 from .embedder import Embedder
 from .index_store import IndexStore
 from .lexicon import correct_text, link_entities
-from .orchestrator import JobPool
+from .monitor import TranscriptMonitor
 from .sources.base import AudioSource
 from .triggers import detect_trigger
-from .types import Card, Job, LexiconEntry, Priority, Retrieved, Utterance
+from .types import Card, Job, LexiconEntry, Priority, Utterance
 from .vad import UtteranceSegmenter
-
-CARD_SCHEMA: dict = {
-    "type": "object",
-    "properties": {
-        "kind": {"type": "string", "enum": ["skill_table", "lore", "rules", "info"]},
-        "title": {"type": "string"},
-        "body_md": {"type": "string"},
-    },
-    "required": ["kind", "title", "body_md"],
-    "additionalProperties": False,
-}
-
-_SYNTHESIS_SYSTEM = (
-    "You are a Dungeon Master's live assistant. You answer from the supplied lore "
-    "excerpts only; never invent names, places, or rules. Produce concise, "
-    "table-first output. For loot/search/examine intents, return a skill-check "
-    "table with a DC column and one row per relevant skill (Investigation, "
-    "Perception, Stealth, etc.). For lore questions, give a short briefing. For "
-    "rules questions, cite the rule. Output is strict JSON."
-)
 
 
 def _wav_bytes(pcm: bytes, sample_rate: int = 16000) -> bytes:
@@ -87,51 +66,6 @@ def _lexicon_prompt(entries: list[LexiconEntry], max_chars: int = 500) -> str:
     return " ".join(parts)
 
 
-def _hits_to_excerpts(hits: list[Retrieved]) -> str:
-    blocks: list[str] = []
-    for i, h in enumerate(hits, 1):
-        text = h.text.strip()
-        if not text:
-            continue
-        src = h.source or h.doc_id
-        blocks.append(f"[{i}] ({src})\n```\n{text}\n```")
-    return "\n\n".join(blocks)
-
-
-def _build_messages(
-    ctx: dict,
-    excerpts: str,
-    user_id: str,
-    entities: list[str],
-) -> list[dict]:
-    utterance = ctx.get("utterance", "")
-    kind = ctx.get("kind", "other")
-    recent = ctx.get("recent", [])
-
-    recent_lines = []
-    for r in recent[-5:]:
-        if isinstance(r, Utterance):
-            recent_lines.append(f"- {r.user_id}: {r.text}")
-        else:
-            recent_lines.append(f"- {r}")
-    recent_block = "\n".join(recent_lines) if recent_lines else "(none)"
-
-    user = (
-        f"Speaker: {user_id}\n"
-        f"Intent kind: {kind}\n"
-        f"Entities mentioned: {', '.join(entities) if entities else '(none)'}\n"
-        f"Recent utterances:\n{recent_block}\n\n"
-        f"Current utterance:\n{utterance}\n\n"
-        f"Lore excerpts (use ONLY these; cite numbers in brackets):\n{excerpts or '(no excerpts retrieved)'}\n\n"
-        "If the intent hints loot, search, or examine, produce a skill-check table "
-        "with a DC column and one row per relevant skill. Otherwise produce a concise "
-        "briefing in markdown. Return JSON matching the schema."
-    )
-    return [
-        {"role": "system", "content": _SYNTHESIS_SYSTEM},
-        {"role": "user", "content": user},
-    ]
-
 
 def _make_job(
     kind: str,
@@ -151,7 +85,13 @@ def _make_job(
 
 class SessionEngine:
     """Owns per-session state: rolling transcript, VAD buffers, lexicon cache,
-    embedding, retrieval, and the synthesis job pool.
+    embedding, the agentic worker, and the synthesis job pool.
+
+    v2: triggers and manual queries route to a WorkerAgent (an agentic tool
+    loop) instead of a fixed embed->retrieve->synthesize pipeline. The fast
+    lane (detect_trigger) picks the tier: durable kinds (loot/rules) produce
+    cards; the rest produce ephemeral scene context. A background
+    TranscriptMonitor proactively surfaces alerts and auto-marks cards done.
     """
 
     def __init__(
@@ -163,6 +103,10 @@ class SessionEngine:
         embedder: Optional[Embedder],
         pool: Any,
         on_event: Callable[[dict], None],
+        project_path: str = "",
+        tool_registry: Optional[Any] = None,
+        player_state: Optional[Any] = None,
+        world_map: str = "",
     ) -> None:
         self.cfg = cfg
         self.store = store
@@ -171,8 +115,23 @@ class SessionEngine:
         self.embedder = embedder
         self.pool = pool
         self.on_event = on_event
+        self.project_path = project_path
+        self.tool_registry = tool_registry
+        self.player_state = player_state
         self._recent: deque[Utterance] = deque(maxlen=30)
         self._hotword_prompt: str = _lexicon_prompt(entries)
+        self._active_cards: dict[str, Card] = {}  # card_id -> Card (mark-done bookkeeping)
+        self._scene_buffer: deque[dict] = deque(maxlen=12)  # recent scene notes (for the monitor)
+        self._agent = WorkerAgent(
+            gw,
+            store,
+            project_path,
+            cfg.agent,
+            world_map=world_map,
+            embedder=embedder,
+            tool_registry=tool_registry,
+        )
+        self._monitor: Optional[TranscriptMonitor] = None
 
     @property
     def recent_utterances(self) -> list[Utterance]:
@@ -281,64 +240,159 @@ class SessionEngine:
 
         await self.pool.submit(job, _work)
 
-    async def _generate_card(self, ctx: dict) -> Card:
+    # -- tier routing ------------------------------------------------------
+    def _tier_for_kind(self, kind: str) -> str:
+        """Map a fast-lane trigger kind (or 'manual') to an output tier."""
+        if kind in self.cfg.agent.card_kinds or kind == "manual":
+            return "card"
+        return "ephemeral"
+
+    def _transcript_text(self) -> str:
+        return "\n".join(f"{u.user_id}: {u.text}" for u in self._recent)
+
+    def _scene_text(self) -> str:
+        return "\n".join(s.get("text", "") for s in self._scene_buffer if s.get("text"))
+
+    def _emit_scene(self, text: str, source: str) -> None:
+        """Record and publish a scene-context note (ephemeral tier)."""
+        self._scene_buffer.append({"text": text, "t": time.time(), "source": source})
+        self.on_event({"type": "scene_context", "text": text, "source": source, "t": time.time()})
+
+    def _task_for_ctx(self, ctx: dict) -> str:
         utterance = ctx.get("utterance", "")
+        kind = ctx.get("kind", "other")
         entities = ctx.get("entities", []) or []
-        q: Optional[np.ndarray] = None
-        if self.embedder is not None and utterance:
-            try:
-                vecs = self.embedder.embed([utterance])
-                if vecs.ndim == 2 and vecs.shape[0] >= 1:
-                    q = vecs[0]
-            except Exception:
-                q = None
-        try:
-            hits = self.store.search(embedding=q, query_text=utterance, k=8)
-        except Exception:
-            hits = []
-        excerpts = _hits_to_excerpts(hits)
+        if kind == "manual":
+            return f"The DM asks directly: {utterance}"
+        kind_hint = {
+            "loot": "a LOOT card: what was found, with quantities and values",
+            "rules": "a RULING card: the DC, the skill, and the ruling",
+            "lore": "a short, verified lore / scene context note",
+        }.get(kind, "a concise, verified answer")
+        ent = f" Entities mentioned: {', '.join(entities)}." if entities else ""
+        return f"The DM triggered a {kind} intent. Produce {kind_hint}.{ent}"
 
-        user_id = "manual" if ctx.get("kind") == "manual" else "session"
-        messages = _build_messages(ctx, excerpts, user_id, entities)
+    async def _generate_card(self, ctx: dict) -> Optional[Card]:
+        """Run the agentic worker for a trigger/manual query.
 
+        Card tier returns a Card (the pool's on_card fires). Ephemeral tier
+        publishes a scene_context event and returns None.
+        """
+        tier = self._tier_for_kind(ctx.get("kind", "other"))
+        task = self._task_for_ctx(ctx)
+        transcript = self._transcript_text()
+        trigger_portion = ctx.get("utterance", "")
         try:
-            result = await self.gw.chat(
-                "synthesis",
-                messages,
-                json_schema=CARD_SCHEMA,
-                temperature=0.3,
+            result = await self._agent.run(
+                task,
+                tier,
+                trigger_portion=trigger_portion,
+                transcript=transcript,
             )
-        except Exception as exc:
-            return Card(
+        except Exception as exc:  # noqa: BLE001 — a bad agent run must not kill the session
+            result = AgentResult(tier=tier, error=f"{type(exc).__name__}: {exc}")
+
+        entities = ctx.get("entities", []) or []
+        if tier == "card":
+            c = result.card or {
+                "kind": "error",
+                "title": "generation failed",
+                "body_md": result.error or "(no card produced)",
+                "player_ids": [],
+                "items": [],
+            }
+            card = Card(
                 id=uuid.uuid4().hex[:12],
-                kind="error",
-                title="generation failed",
-                body_md=str(exc),
+                kind=str(c.get("kind", "info")),
+                title=str(c.get("title", "Note")),
+                body_md=str(c.get("body_md", "")),
                 t_context=time.time(),
-                meta={"sources": [h.source for h in hits], "entities": entities},
+                status="active",
+                player_ids=list(c.get("player_ids", []) or []),
+                meta={
+                    "items": list(c.get("items", []) or []),
+                    "entities": entities,
+                    "tier": "card",
+                    "tool_calls": result.tool_calls,
+                    "error": result.error,
+                },
             )
+            self._active_cards[card.id] = card
+            return card
+        # ephemeral tier -> scene context (no card event)
+        self._emit_scene(result.text or "", "trigger")
+        return None
 
-        card_kind = "info"
-        card_title = ""
-        card_body = ""
-        if isinstance(result, dict):
-            card_kind = str(result.get("kind") or "info")
-            card_title = str(result.get("title") or "")
-            card_body = str(result.get("body_md") or "")
-        elif isinstance(result, str):
-            card_body = result
+    # -- card lifecycle (mark-done, never delete) --------------------------
+    async def mark_card_done(self, card_id: str) -> bool:
+        card = self._active_cards.get(card_id)
+        if card is None or card.status == "done":
+            return False
+        card.status = "done"
+        self.on_event({"type": "card_done", "card_id": card_id, "t": time.time()})
+        if self.player_state is not None:
+            for pid in card.player_ids:
+                try:
+                    self.player_state.record_card_done(
+                        pid,
+                        {
+                            "id": card.id,
+                            "kind": card.kind,
+                            "title": card.title,
+                            "items": card.meta.get("items", []),
+                            "t": time.time(),
+                        },
+                    )
+                except Exception:
+                    pass
+        return True
 
-        return Card(
-            id=uuid.uuid4().hex[:12],
-            kind=card_kind,
-            title=card_title,
-            body_md=card_body,
-            t_context=time.time(),
-            meta={
-                "sources": [h.source for h in hits],
-                "entities": entities,
-            },
+    def active_cards(self) -> list[Card]:
+        return list(self._active_cards.values())
+
+    # -- transcript monitor (proactive) ------------------------------------
+    def start_monitor(self) -> None:
+        if self._monitor is not None:
+            return
+        self._monitor = TranscriptMonitor(
+            self.gw,
+            self.cfg.agent,
+            get_transcript=self._transcript_text,
+            get_scene=self._scene_text,
+            on_action=self._on_monitor_action,
         )
+        self._monitor.start()
+
+    def stop_monitor(self) -> None:
+        if self._monitor is not None:
+            self._monitor.stop()
+            self._monitor = None
+
+    async def _on_monitor_action(self, verdict: dict) -> None:
+        action = verdict.get("action")
+        if action == "card_done":
+            cid = verdict.get("card_id", "")
+            if cid:
+                await self.mark_card_done(cid)
+            return
+        if action == "surface":
+            tier = verdict.get("tier", "ephemeral")
+            if tier == "card":
+                ctx = {
+                    "utterance": verdict.get("reason", "surface a card"),
+                    "entities": [],
+                    "kind": "rules",
+                    "recent": list(self._recent)[-5:],
+                    "source": "monitor",
+                }
+                job = _make_job("monitor", ctx, Priority.TRIGGER, context_window_s=120.0)
+
+                async def _work() -> Optional[Card]:
+                    return await self._generate_card(ctx)
+
+                await self.pool.submit(job, _work)
+            else:
+                self._emit_scene(verdict.get("text", ""), "monitor")
 
     async def consume_source(self, source: AudioSource) -> None:
         """Stream an AudioSource through the VAD, transcribing each utterance.

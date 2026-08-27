@@ -101,10 +101,26 @@ def create_mock_app(state: MockState | None = None) -> FastAPI:
             props = sorted((schema.get("schema", {}).get("properties") or {}).keys())
         else:
             props = []
-        if "fast" in model or "is_trigger" in props:
-            text = _content_of(req)
-            triggered = any(w in text.lower() for w in ("search", "loot", "examine"))
-            content = json.dumps({"is_trigger": triggered, "kind": "loot" if triggered else "other"})
+        if "is_trigger" in props:
+            # Fast-lane classifier: route on the line's intent.
+            text = _content_of(req).lower()
+            if any(w in text for w in ("search", "loot", "examine", "inspect")):
+                content = json.dumps({"is_trigger": True, "kind": "loot"})
+            elif any(w in text for w in ("history", "lore", "who is", "what is", "background", "tell me")):
+                content = json.dumps({"is_trigger": True, "kind": "lore"})
+            else:
+                content = json.dumps({"is_trigger": False, "kind": "other"})
+        elif "fast" in model:
+            # Agent ephemeral tier (fast role, free-form): grounded scene note.
+            content = json.dumps(
+                {
+                    "text": (
+                        "The Ashforge is a dwarven foundry district east of the temple "
+                        "square, governed by the Forge-master; Vex'ahlia bears the scouts' "
+                        "sealed signet."
+                    )
+                }
+            )
         else:
             content = json.dumps(_card_json(_content_of(req)))
         return JSONResponse(

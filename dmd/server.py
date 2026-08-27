@@ -382,6 +382,97 @@ def create_app(
             pass
         return {"ok": True, "dm_user_id": dm_id}
 
+
+    # --- Full config editor (GET/POST /api/config) ---
+    SECRET_PATHS = (
+        "discord.token",
+        "models.synthesis.api_key",
+        "models.fast.api_key",
+        "models.stt.api_key",
+        "models.embeddings.api_key",
+        "models.vision.api_key",
+    )
+
+    def _mask_secrets(d: dict) -> dict:
+        import copy
+
+        out = copy.deepcopy(d)
+        for path in SECRET_PATHS:
+            parts = path.split(".")
+            cur = out
+            for part in parts[:-1]:
+                cur = cur.get(part) if isinstance(cur, dict) else None
+                if not isinstance(cur, dict):
+                    cur = None
+                    break
+            if isinstance(cur, dict) and isinstance(cur.get(parts[-1]), str) and cur.get(parts[-1]):
+                cur[parts[-1]] = "__MASKED__"
+        return out
+
+    def _effective(raw: dict) -> dict:
+        """Config with all pydantic defaults applied — the values the app actually uses."""
+        try:
+            from dmd.config import AppConfig
+
+            return AppConfig.model_validate(raw).model_dump()
+        except Exception:
+            return raw
+
+    def _deep_merge(base: dict, patch: dict) -> dict:
+        import copy
+
+        out = copy.deepcopy(base)
+        for k, v in patch.items():
+            if isinstance(v, dict) and isinstance(out.get(k), dict):
+                out[k] = _deep_merge(out[k], v)
+            elif v == "__MASKED__" and out.get(k) is not None:
+                continue
+            else:
+                out[k] = v
+        return out
+
+    def _config_file() -> Path:
+        p = Path(str(getattr(cfg, "_config_path", None) or "config.yaml"))
+        return p if p.exists() else Path("config.yaml")
+
+    @app.get("/api/config")
+    async def api_get_config() -> dict[str, Any]:
+        try:
+            import yaml
+
+            p = _config_file()
+            if not p.exists():
+                return {"ok": False, "detail": "config.yaml not found"}
+            raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+            return {"ok": True, "config": _mask_secrets(_effective(raw))}
+        except Exception as e:
+            return {"ok": False, "detail": str(e)}
+
+    @app.post("/api/config")
+    async def api_set_config(req: Request) -> dict[str, Any]:
+        try:
+            payload = await req.json()
+        except Exception:
+            return {"ok": False, "detail": "invalid json"}
+        patch = payload.get("config")
+        if not isinstance(patch, dict):
+            return {"ok": False, "detail": "missing config object"}
+        try:
+            import yaml
+
+            p = _config_file()
+            if not p.exists():
+                return {"ok": False, "detail": "config.yaml not found"}
+            base_raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+            base = _effective(base_raw)
+            merged = _deep_merge(base, patch)
+            if "server" in base_raw:
+                merged["server"] = base_raw["server"]
+            changed = [k for k in patch if merged.get(k) != base.get(k)]
+            p.write_text(yaml.safe_dump(merged, sort_keys=False), encoding="utf-8")
+            return {"ok": True, "changed": changed, "restart_required": bool(changed)}
+        except Exception as e:
+            return {"ok": False, "detail": str(e)}
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket) -> None:
         await websocket.accept()
@@ -512,6 +603,32 @@ def _make_init_runner(
         return None
 
 
+def _seed_players(player_state: Any, project_path: str) -> None:
+    """Seed the player store from the campaign's characters/ dir (if present)."""
+    if not project_path:
+        return
+    chardir = Path(project_path) / "characters"
+    if not chardir.is_dir():
+        return
+    for f in sorted(chardir.glob("*.md")):
+        pid = f.stem
+        name = pid.replace("_", " ").replace("-", " ").title()
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+            if text.startswith("---"):
+                end = text.find("---", 3)
+                if end != -1:
+                    for line in text[3:end].splitlines():
+                        if line.lower().startswith("title:"):
+                            name = line.split(":", 1)[1].strip().strip('"')
+        except Exception:
+            pass
+        try:
+            player_state.seed([{"id": pid, "name": name, "sheet": f"characters/{f.name}"}])
+        except Exception:
+            pass
+
+
 def _make_engine(
     cfg: Any,
     store: Any,
@@ -520,12 +637,42 @@ def _make_engine(
     lexicon_entries: Any,
     pool: Any,
     bus: EventBus,
+    db_dir: Any = None,
 ) -> Any:
     try:
         from dmd.pipeline import SessionEngine
 
+        project_path = ""
+        if cfg is not None:
+            project_path = str(getattr(getattr(cfg, "project", None), "path", "") or "")
+
         def _on_event(event: dict[str, Any]) -> None:
             bus.publish_sync(event)
+
+        player_state = None
+        if db_dir is not None:
+            try:
+                from dmd.player_state import PlayerState
+
+                player_state = PlayerState(str(Path(db_dir) / "players.db"))
+                _seed_players(player_state, project_path)
+            except Exception:
+                player_state = None
+
+        # The agent's run_tool drives the existing tools_reg (async-probed repo
+        # scripts); wiring it needs a startup hook, so the agent runs on its
+        # built-in tools (retrieve / repo_read / web) for now.
+        tool_registry = None
+
+        world_map = ""
+        try:
+            from dmd.world_map import build_world_map
+
+            players = player_state.all_players() if player_state is not None else None
+            tool_names = []
+            world_map = build_world_map(project_path, store, players=players, tools=tool_names)
+        except Exception:
+            world_map = ""
 
         engine = SessionEngine(
             cfg=cfg,
@@ -535,6 +682,10 @@ def _make_engine(
             embedder=embedder,
             pool=pool,
             on_event=_on_event,
+            project_path=project_path,
+            tool_registry=tool_registry,
+            player_state=player_state,
+            world_map=world_map,
         )
         return engine
     except Exception:
@@ -573,6 +724,7 @@ def main(config_path: str) -> None:
     pool: Any = None
     engine: Any = None
     init_runner: Any = None
+    db_dir: Any = None
     bus = EventBus()
 
     try:
@@ -628,7 +780,7 @@ def main(config_path: str) -> None:
                 lexicon_entries = []
 
     pool = _make_pool(cfg, bus)
-    engine = _make_engine(cfg, store, gateway, embedder, lexicon_entries, pool, bus)
+    engine = _make_engine(cfg, store, gateway, embedder, lexicon_entries, pool, bus, db_dir=db_dir)
     init_runner = _make_init_runner(cfg, store, gateway, embedder, lexicon_entries)
     status_provider = _build_status_provider(cfg, store, gateway)
 
@@ -645,6 +797,7 @@ def main(config_path: str) -> None:
         init_runner=init_runner,
         status_provider=status_provider,
         browser_source=browser_source,
+        bus=bus,
     )
 
     if browser_source is not None and engine is not None:
@@ -667,6 +820,27 @@ def main(config_path: str) -> None:
 
         except Exception:
             pass
+
+    if engine is not None:
+        start_mon = getattr(engine, "start_monitor", None)
+        stop_mon = getattr(engine, "stop_monitor", None)
+        if callable(start_mon):
+
+            @app.on_event("startup")
+            async def _start_monitor() -> None:
+                try:
+                    start_mon()
+                except Exception:
+                    pass
+
+        if callable(stop_mon):
+
+            @app.on_event("shutdown")
+            async def _stop_monitor() -> None:
+                try:
+                    stop_mon()
+                except Exception:
+                    pass
 
     host = os.environ.get("DMD_HOST", getattr(getattr(cfg, "server", None), "host", "0.0.0.0") or "0.0.0.0") if cfg else os.environ.get("DMD_HOST", "0.0.0.0")
     port = int(os.environ.get("DMD_PORT", str(getattr(getattr(cfg, "server", None), "port", 8760) or 8760)) or 8760)

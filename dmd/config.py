@@ -63,6 +63,7 @@ class VisionRole(BaseModel):
 
 class SttRole(EndpointConfig):
     base_url: str
+    dialect: str = "openai"  # "openai" = /v1/audio/transcriptions; "whisperx" = POST /transcribe
 
 
 class EmbeddingsRole(BaseModel):
@@ -85,6 +86,22 @@ class OrchestrationConfig(BaseModel):
     job_timeout_s: float = 20.0
     stale_after_s: float = 120.0
 
+
+class AgentConfig(BaseModel):
+    """Worker-agent and monitor tuning (v2 agentic layer)."""
+
+    max_tool_calls: int = 6  # tool-call budget per agent loop (card tier)
+    ephemeral_max_tool_calls: int = 3  # lighter budget for the ephemeral tier
+    agent_timeout_s: float = 45.0  # whole agent-loop wall-clock budget
+    web_timeout_s: float = 8.0  # per web_search/web_fetch call
+    monitor_cadence_s: float = 30.0  # transcript monitor poll interval
+    monitor_lookback: int = 20  # recent utterances the monitor reasons over
+    card_kinds: list[str] = [
+        "loot",
+        "rules",
+    ]
+    # Fast-lane trigger kinds that map to the durable card tier
+    # (detect_trigger yields loot/lore/rules/other); the rest go ephemeral.
 
 class SttPipelineConfig(BaseModel):
     sample_rate: int = 16000
@@ -119,6 +136,7 @@ class AppConfig(BaseModel):
     project: ProjectConfig = ProjectConfig()
     models: ModelsConfig
     orchestration: OrchestrationConfig = OrchestrationConfig()
+    agent: AgentConfig = AgentConfig()
     stt_pipeline: SttPipelineConfig = SttPipelineConfig()
     discord: DiscordConfig = DiscordConfig()
     server: ServerConfig = ServerConfig()

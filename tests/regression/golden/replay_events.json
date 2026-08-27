@@ -12,12 +12,14 @@
       "kind": "skill_table",
       "meta": {
         "entities": [],
-        "sources": [
-          "items/scouts_pouch.md",
-          "locations/ashforge.md",
-          "npcs/vexahlia.md"
-        ]
+        "error": null,
+        "items": [],
+        "sources": [],
+        "tier": "card",
+        "tool_calls": 0
       },
+      "player_ids": [],
+      "status": "active",
       "t_context": 0.0,
       "title": "Loot Table \u2014 Fallen Scout"
     },
@@ -36,12 +38,14 @@
       "kind": "rules",
       "meta": {
         "entities": [],
-        "sources": [
-          "items/scouts_pouch.md",
-          "locations/ashforge.md",
-          "npcs/vexahlia.md"
-        ]
+        "error": null,
+        "items": [],
+        "sources": [],
+        "tier": "card",
+        "tool_calls": 0
       },
+      "player_ids": [],
+      "status": "active",
       "t_context": 0.0,
       "title": "Rules \u2014 Grappled"
     },

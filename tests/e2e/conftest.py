@@ -197,6 +197,12 @@ def stack(tmp_path_factory: pytest.TempPathFactory) -> Any:
     s.state = state
     s.bus = bus
     s.engine = engine
+    s.cfg = cfg
+    s.store = store
+    s.gw = gw
+    s.embedder = emb
+    s.entries = entries
+    s.campaign_path = str(campaign)
     yield s
 
     ui_srv.should_exit = True

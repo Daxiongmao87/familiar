@@ -57,6 +57,8 @@ class Card:
     body_md: str
     t_context: float  # session-time this card answers
     meta: dict[str, Any] = field(default_factory=dict)
+    status: str = "active"  # "active" | "done"  (mark-done, never delete)
+    player_ids: list[str] = field(default_factory=list)  # players this card concerns
 
 
 @dataclass(slots=True)

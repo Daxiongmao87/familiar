@@ -16,12 +16,15 @@ models:
   synthesis:                     # REQUIRED: cards, enrichment, scene summaries
     base_url: http://localhost:8081/v1
     api_key: ${LLM_API_KEY}      # optional; ${VAR} expanded from environment
-    model_id: ornith-ai/ornith-1.5-35b
-    extra_body: {}               # free-form JSON injected verbatim into request body
+    model_id: ling/ling-3.0-tiny
+    # The card tier runs a multi-call agentic loop; a slow model (e.g. the 35b)
+    # exceeds agent_timeout_s and errors. Use a fast model for responsive cards,
+    # or keep a slow model and raise agent_timeout_s for quality-over-latency.
+    extra_body: { enable_thinking: false }   # free-form JSON; disable thinking for fast models
   fast:                          # optional: per-utterance classification
     base_url: http://localhost:8081/v1
     api_key: ${LLM_API_KEY}
-    model_id: empero-ai/qwen3.8-4b
+    model_id: ling/ling-3.0-tiny
     extra_body: { enable_thinking: false }
   vision:                        # optional: init-time image captioning
     # base_url: ...

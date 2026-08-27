@@ -89,14 +89,16 @@ def test_ui_end_to_end_with_screenshots(stack) -> None:
         _assert_rendered(SHOTS / name)
 
     recorded = httpx.get(f"{stack.mock_url}/_mock/requests", timeout=5).json()["requests"]
+    # v2: the card is produced by the agentic worker on the synthesis (smart)
+    # role. That call is free-form JSON in the message content, so it carries
+    # no response_format — assert the synthesis model was actually invoked.
     synth_calls = [
         r
         for r in recorded
         if r["path"] == "/v1/chat/completions"
         and r["body"].get("model") == "mock-synthesis"
-        and "response_format" in r["body"]
     ]
-    assert len(synth_calls) == 1, f"expected exactly one schema-constrained synthesis call; got {len(synth_calls)}"
+    assert len(synth_calls) >= 1, f"expected at least one synthesis (agent) call; got {len(synth_calls)}"
 
 
 @pytest.mark.e2e

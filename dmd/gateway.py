@@ -112,6 +112,23 @@ class Gateway:
         ep = self._resolve("stt")
         if not ep.base_url:
             raise GatewayError("stt role has no base_url")
+        if getattr(ep, "dialect", "openai") == "whisperx":
+            wurl = ep.base_url.rstrip("/") + "/transcribe"
+            r = await self._client.post(
+                wurl,
+                params={"diarize": "false", "align": "false"},
+                content=audio_bytes,
+                headers={"Content-Type": "audio/wav", **self._auth_headers(ep)},
+            )
+            if r.status_code != 200:
+                raise GatewayError(f"stt http {r.status_code}: {r.text[:200]}")
+            data = r.json()
+            text = data.get("text") or ""
+            if not text.strip():
+                text = " ".join(
+                    (seg.get("text") or "") for seg in data.get("segments", [])
+                )
+            return text.strip()
         url = ep.base_url.rstrip("/") + "/audio/transcriptions"
         files = {"file": (filename, audio_bytes, "audio/wav")}
         form: dict[str, str] = {}
