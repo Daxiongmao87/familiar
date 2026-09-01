@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 
+from dmd.agent import AgentResult
 from dmd.orchestrator import JobPool
 from dmd.pipeline import SessionEngine
 from dmd.types import Card, Utterance
@@ -90,3 +91,58 @@ async def test_agentic_session_grounds_outputs_for_right_triggers(stack: Any) ->
         and "response_format" in r["body"]
     ]
     assert fast_classifier_calls, "the fast-lane classifier was never invoked"
+
+
+@pytest.mark.e2e
+async def test_empty_agent_output_produces_no_scene_context(stack: Any) -> None:
+    """Regression: an ephemeral-tier agent that produces no text (e.g. times out
+    under GPU load) must NOT publish an empty scene-context event.
+
+    Before the fix, ``_generate_card`` called ``_emit_scene("", ...)`` on an
+    empty agent result, leaking a no-op scene note. The agent's run is patched
+    to return empty text; a lore trigger should yield zero scene_context events.
+    """
+    cards: list[Card] = []
+    events: list[dict[str, Any]] = []
+
+    async def on_card(card: Card) -> None:
+        cards.append(card)
+
+    pool = JobPool(max_concurrent=2, job_timeout_s=15.0, stale_after_s=120.0, on_card=on_card)
+    engine = SessionEngine(
+        cfg=stack.cfg,
+        store=stack.store,
+        gw=stack.gw,
+        entries=stack.entries,
+        embedder=stack.embedder,
+        pool=pool,
+        on_event=events.append,
+        project_path=str(stack.campaign_path),
+    )
+
+    # Force the agent to produce nothing (simulated timeout / empty output).
+    async def _run_empty(task, tier, trigger_portion="", transcript=""):
+        return AgentResult(tier=tier, text="", error="simulated empty output")
+
+    original_run = engine._agent.run
+    engine._agent.run = _run_empty
+    try:
+        # Lore trigger routes to the ephemeral tier; with empty agent output,
+        # no scene note should be published.
+        await engine.handle_utterance(
+            Utterance(
+                user_id="bryn",
+                text="what's the history of this place?",
+                t_start=0.0,
+                t_end=1.0,
+            )
+        )
+    finally:
+        engine._agent.run = original_run
+
+    await pool.close()
+
+    scene_notes = [e for e in events if e.get("type") == "scene_context"]
+    assert scene_notes == [], (
+        f"empty agent output must not emit a scene note, got {scene_notes}"
+    )

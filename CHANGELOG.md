@@ -60,3 +60,23 @@
   still sent in full. Verified live: grounded loot card in 9.1s through the
   full pipeline when the endpoint is responsive. Non-release-affecting
   (pre-1.0; no version tag yet).
+- **Empty scene-context guard.** `dmd/pipeline.py` no longer publishes an
+  empty `scene_context` event when an ephemeral-tier agent produces no text
+  (e.g. it times out under GPU contention). Before the fix a timed-out
+  agent leaked a no-op scene note (`text: ""`). Regression test
+  `tests/e2e/test_agentic_pipeline.py::test_empty_agent_output_produces_no_scene_context`
+  pins the defect (red before the fix: an empty scene event is emitted;
+  green after: none emitted). Patch (pre-1.0).
+- **Browser test environment guard.** `tests/e2e/test_ui_e2e.py` now skips
+  the headless-browser test when the host cannot create a named semaphore
+  (`/dev/shm` restricted; common in PID-namespace containers) instead of
+  failing. The non-browser UI tests (data path) and
+  `scripts/verify_live_ui.py` verify the live-window contract (cards +
+  transcript over HTTP + WS) without a browser. Test hardening; no behavior
+  change. Non-release-affecting.
+- **Live UI data-path verification.** `scripts/verify_live_ui.py` replicates
+  the e2e stack (mock backend + real engine + real uvicorn app), connects a
+  WebSocket subscriber, drives a manual query + transcript events, and
+  asserts cards and transcript lines reach the client. Run to confirm the
+  live window renders artifacts when a real browser isn't available.
+  Verification tooling; non-release-affecting.

@@ -320,7 +320,12 @@ class SessionEngine:
             self._active_cards[card.id] = card
             return card
         # ephemeral tier -> scene context (no card event)
-        self._emit_scene(result.text or "", "trigger")
+        text = result.text or ""
+        if result.error or not text.strip():
+            # The agent produced nothing (e.g. timed out under load); do not
+            # publish an empty scene note — it would decay into a no-op event.
+            return None
+        self._emit_scene(text, "trigger")
         return None
 
     # -- card lifecycle (mark-done, never delete) --------------------------
