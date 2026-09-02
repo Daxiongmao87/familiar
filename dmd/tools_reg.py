@@ -6,7 +6,6 @@ import asyncio
 import json
 import os
 import time
-from typing import Optional
 
 import yaml
 
@@ -15,7 +14,7 @@ from .types import ToolSpec
 _TOOL_EXTS: tuple[str, ...] = (".py", ".sh")
 
 
-def _executable_candidate(path: str) -> Optional[list[str]]:
+def _executable_candidate(path: str) -> list[str] | None:
     if not os.path.isfile(path):
         return None
     ext = os.path.splitext(path)[1].lower()
@@ -39,7 +38,7 @@ def discover_tools(root: str) -> list[list[str]]:
     yaml_path = os.path.join(root, "tools.yaml")
     if os.path.isfile(yaml_path):
         try:
-            with open(yaml_path, "r", encoding="utf-8") as f:
+            with open(yaml_path, encoding="utf-8") as f:
                 data = yaml.safe_load(f)
         except (OSError, yaml.YAMLError):
             data = None

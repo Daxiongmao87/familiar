@@ -22,7 +22,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .config import AgentConfig
 from .gateway import Gateway
@@ -37,10 +37,10 @@ class AgentResult:
     """What a worker-agent run produced."""
 
     tier: str  # "ephemeral" | "card"
-    card: Optional[Dict[str, Any]] = None  # card tier: {kind,title,body_md,player_ids,items}
-    text: Optional[str] = None  # ephemeral tier: short scene-relevant note
+    card: dict[str, Any] | None = None  # card tier: {kind,title,body_md,player_ids,items}
+    text: str | None = None  # ephemeral tier: short scene-relevant note
     tool_calls: int = 0
-    error: Optional[str] = None
+    error: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -52,7 +52,7 @@ class AgentResult:
 # ---------------------------------------------------------------------------
 
 
-def _extract_json(text) -> Optional[Dict[str, Any]]:
+def _extract_json(text) -> dict[str, Any] | None:
     """Parse the first JSON object out of a model response (str or pre-parsed dict)."""
     if isinstance(text, dict):
         return text
@@ -151,9 +151,9 @@ class WorkerAgent:
         project_path: str,
         cfg: AgentConfig,
         world_map: str = "",
-        embedder: Optional[Any] = None,  # local Embedder for query vectors (matches init)
-        tool_registry: Optional[Any] = None,
-        player_names: Optional[Dict[str, str]] = None,
+        embedder: Any | None = None,  # local Embedder for query vectors (matches init)
+        tool_registry: Any | None = None,
+        player_names: dict[str, str] | None = None,
     ) -> None:
         self.gw = gw
         self.store = store
@@ -224,7 +224,7 @@ class WorkerAgent:
                 else:
                     try:
                         result = await self._run_tool(name, args)
-                    except Exception as e:  # noqa: BLE001 — degrade, don't crash the loop
+                    except Exception as e:
                         result = {"error": f"{type(e).__name__}: {e}"}
                 tool_calls += 1
                 messages.append({"role": "assistant", "content": _content_str(content)})
@@ -284,7 +284,7 @@ class WorkerAgent:
             parts += ["", "WORLD MAP:", self.world_map]
         return "\n".join(parts)
 
-    def _normalize_card(self, parsed: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize_card(self, parsed: dict[str, Any]) -> dict[str, Any]:
         items = parsed.get("items")
         if not isinstance(items, list):
             items = []
@@ -306,7 +306,7 @@ class WorkerAgent:
         return names
 
     # -- tools -------------------------------------------------------------
-    async def _run_tool(self, name: str, args: Dict[str, Any]) -> Any:
+    async def _run_tool(self, name: str, args: dict[str, Any]) -> Any:
         if name == "retrieve":
             return await self._tool_retrieve(args)
         if name == "repo_read":
@@ -319,7 +319,7 @@ class WorkerAgent:
             return await self._tool_run_tool(args)
         return {"error": f"unknown tool '{name}'"}
 
-    async def _tool_retrieve(self, args: Dict[str, Any]) -> Any:
+    async def _tool_retrieve(self, args: dict[str, Any]) -> Any:
         query = str(args.get("query", "")).strip()
         if not query:
             return {"error": "retrieve needs a 'query'"}
@@ -329,7 +329,7 @@ class WorkerAgent:
             else:
                 vec = (await self.gw.embed([query]))[0]
             hits = self.store.search(embedding=vec, query_text=query, k=6)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             return {"error": f"retrieve failed: {type(e).__name__}: {e}"}
         return {
             "results": [
@@ -342,7 +342,7 @@ class WorkerAgent:
             ]
         }
 
-    def _tool_repo_read(self, args: Dict[str, Any]) -> Any:
+    def _tool_repo_read(self, args: dict[str, Any]) -> Any:
         rel = str(args.get("path", "")).strip().lstrip("/")
         if not rel:
             return {"error": "repo_read needs a 'path'"}
@@ -353,13 +353,13 @@ class WorkerAgent:
         if not os.path.isfile(target):
             return {"error": f"no such file: {rel}"}
         try:
-            with open(target, "r", encoding="utf-8") as f:
+            with open(target, encoding="utf-8") as f:
                 text = f.read(20000)
             return {"path": rel, "chars": len(text), "content": text}
         except OSError as e:
             return {"error": f"read failed: {e}"}
 
-    async def _tool_web_search(self, args: Dict[str, Any]) -> Any:
+    async def _tool_web_search(self, args: dict[str, Any]) -> Any:
         query = str(args.get("query", "")).strip()
         if not query:
             return {"error": "web_search needs a 'query'"}
@@ -368,14 +368,14 @@ class WorkerAgent:
             client = self._get_http()
             resp = await client.get(url, timeout=self.cfg.web_timeout_s)
             resp.raise_for_status()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             return {"error": f"web_search unavailable: {type(e).__name__}", "degraded": True}
         links = _ddg_links(resp.text)
         if not links:
             return {"results": [], "note": "no results (possibly offline)"}
         return {"results": links[:5]}
 
-    async def _tool_web_fetch(self, args: Dict[str, Any]) -> Any:
+    async def _tool_web_fetch(self, args: dict[str, Any]) -> Any:
         url = str(args.get("url", "")).strip()
         if not url or not url.startswith(("http://", "https://")):
             return {"error": "web_fetch needs an http(s) 'url'"}
@@ -383,11 +383,11 @@ class WorkerAgent:
             client = self._get_http()
             resp = await client.get(url, timeout=self.cfg.web_timeout_s)
             resp.raise_for_status()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             return {"error": f"web_fetch unavailable: {type(e).__name__}", "degraded": True}
         return {"url": url, "status": resp.status_code, "text": _html_to_text(resp.text)[:8000]}
 
-    async def _tool_run_tool(self, args: Dict[str, Any]) -> Any:
+    async def _tool_run_tool(self, args: dict[str, Any]) -> Any:
         if self.tool_registry is None:
             return {"error": "no tools configured"}
         name = str(args.get("name", "")).strip()
@@ -396,7 +396,7 @@ class WorkerAgent:
         try:
             result = await self.tool_registry.run(name, args.get("args", {}))
             return result if isinstance(result, (dict, list)) else {"result": result}
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             return {"error": f"tool '{name}' failed: {type(e).__name__}: {e}"}
 
     def _get_http(self):
@@ -434,16 +434,16 @@ def _html_to_text(html: str) -> str:
     return text.strip()
 
 
-def _ddg_links(page_html: str) -> List[Dict[str, str]]:
+def _ddg_links(page_html: str) -> list[dict[str, str]]:
     """Parse DuckDuckGo HTML result links (title + url) without a search API."""
-    out: List[Dict[str, str]] = []
+    out: list[dict[str, str]] = []
     # DDG html endpoint wraps results in <a class="result__a" href="...">Title</a>
-    for m in re.finditer(r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>', page_html, re.S):
+    for m in re.finditer(r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>', page_html, re.DOTALL):
         href = m.group(1)
         title = _html_to_text(m.group(2))[:200]
         # DDG wraps real url in a redirect: //duckduckgo.com/l/?uddg=<encoded>
         if "uddg=" in href:
-            from urllib.parse import parse_qs, urlparse, unquote
+            from urllib.parse import parse_qs, unquote, urlparse
 
             qs = parse_qs(urlparse("https:" + href if href.startswith("//") else href).query)
             if qs.get("uddg"):

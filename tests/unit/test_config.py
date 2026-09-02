@@ -6,7 +6,6 @@ import pytest
 
 from dmd.config import ConfigError, load_config, load_config_dict
 
-
 # ---------------------------------------------------------------------------
 # load_config_dict: happy path
 # ---------------------------------------------------------------------------

@@ -34,7 +34,7 @@ class FakeEmbedder:
             # md5 is deterministic across runs, unlike Python's randomized hash().
             h = int(hashlib.md5(t.encode("utf-8")).hexdigest(), 16)
             for j in range(self._dim):
-                out[i, j] = float(((h >> (j * 4)) & 0xF)) / 15.0
+                out[i, j] = float((h >> (j * 4)) & 0xF) / 15.0
         return out
 
 
@@ -120,9 +120,8 @@ async def test_run_init_counts_and_progress_stages(tmp_path: Path, store: IndexS
         assert stage in progress, f"missing stage {stage} in {progress}"
     # Strict ordering: each stage index < next
     indices = [progress.index(s) for s in expected_subsequence]
-    assert indices == sorted(indices), (
-        f"stage order violated: {list(zip(expected_subsequence, indices))}"
-    )
+    paired = list(zip(expected_subsequence, indices, strict=True))
+    assert indices == sorted(indices), f"stage order violated: {paired}"
 
 
 @pytest.mark.asyncio

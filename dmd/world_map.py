@@ -13,7 +13,7 @@ the map is always a usable, if partial, orientation.
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .index_store import IndexStore
 from .types import Entity
@@ -28,7 +28,7 @@ def _structure_section(docs: list) -> str:
     """Group indexed files by top-level folder into a compact tree."""
     if not docs:
         return ""
-    groups: "OrderedDict[str, list[str]]" = OrderedDict()
+    groups: OrderedDict[str, list[str]] = OrderedDict()
     for d in docs:
         path = d.path.replace("\\", "/")
         top = path.split("/", 1)[0] if "/" in path else "."
@@ -47,7 +47,7 @@ def _structure_section(docs: list) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _entities_section(entities: List[Entity]) -> str:
+def _entities_section(entities: list[Entity]) -> str:
     if not entities:
         return ""
     lines = ["## Entities", ""]
@@ -66,7 +66,7 @@ def _entities_section(entities: List[Entity]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _players_section(players: List[Dict[str, Any]]) -> str:
+def _players_section(players: list[dict[str, Any]]) -> str:
     if not players:
         return ""
     lines = ["## Players", ""]
@@ -83,7 +83,7 @@ def _players_section(players: List[Dict[str, Any]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _tools_section(tools: List[Dict[str, Any]]) -> str:
+def _tools_section(tools: list[dict[str, Any]]) -> str:
     if not tools:
         return ""
     lines = ["## Tools (runnable via the `run_tool` tool)", ""]
@@ -104,7 +104,7 @@ def _overview_section(project_path: str) -> str:
         p = os.path.join(project_path, candidate)
         if os.path.isfile(p):
             try:
-                with open(p, "r", encoding="utf-8") as f:
+                with open(p, encoding="utf-8") as f:
                     text = f.read(_MAX_OVERVIEW_CHARS + 200)
                 return "## Campaign Overview\n\n" + text.strip()[:_MAX_OVERVIEW_CHARS] + "\n"
             except OSError:
@@ -114,12 +114,12 @@ def _overview_section(project_path: str) -> str:
 
 def build_world_map(
     project_path: str,
-    store: Optional[IndexStore],
-    players: Optional[List[Dict[str, Any]]] = None,
-    tools: Optional[List[Dict[str, Any]]] = None,
+    store: IndexStore | None,
+    players: list[dict[str, Any]] | None = None,
+    tools: list[dict[str, Any]] | None = None,
 ) -> str:
     """Assemble the compact world-map orientation text."""
-    sections: List[str] = []
+    sections: list[str] = []
     if store is not None:
         try:
             docs = store.all_documents()

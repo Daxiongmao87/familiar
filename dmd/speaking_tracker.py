@@ -8,7 +8,6 @@ broken, so this tracker works in the DAVE-broken world.
 from __future__ import annotations
 
 import time
-from collections import defaultdict
 from typing import Any
 
 

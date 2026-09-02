@@ -11,7 +11,6 @@ from dmd.index_store import IndexStore
 from dmd.scanner import DocFile, chunk_docs
 from dmd.types import Entity
 
-
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------

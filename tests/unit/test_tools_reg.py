@@ -11,7 +11,6 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Optional
 
 import pytest
 import yaml
@@ -23,8 +22,8 @@ def write_tool_script(
     tools_dir: Path,
     name: str,
     *,
-    probe: Optional[dict] = None,
-    side_effect: Optional[Path] = None,
+    probe: dict | None = None,
+    side_effect: Path | None = None,
     sleep_s: float = 0.0,
     exit_code: int = 0,
     bad_json: bool = False,

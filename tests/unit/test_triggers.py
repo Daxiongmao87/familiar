@@ -16,7 +16,6 @@ import pytest
 
 from dmd.triggers import detect_trigger, detect_trigger_rule
 
-
 # ---------------------------------------------------------------------------
 # detect_trigger_rule: positive matches
 # ---------------------------------------------------------------------------

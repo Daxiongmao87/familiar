@@ -13,7 +13,7 @@ import json
 import sqlite3
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS players (
@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS players (
 """
 
 
-def _load(blob: Optional[str], default: Any) -> Any:
+def _load(blob: str | None, default: Any) -> Any:
     if not blob:
         return default
     try:
@@ -53,7 +53,7 @@ class PlayerState:
         self._conn.commit()
 
     # -- seeding -----------------------------------------------------------
-    def seed(self, players: List[Dict[str, Any]]) -> None:
+    def seed(self, players: list[dict[str, Any]]) -> None:
         """Insert or update players from a list of {id, name, sheet, hp?}."""
         with self._lock:
             for p in players:
@@ -84,21 +84,21 @@ class PlayerState:
             self._conn.commit()
 
     # -- reads -------------------------------------------------------------
-    def get(self, player_id: str) -> Optional[Dict[str, Any]]:
+    def get(self, player_id: str) -> dict[str, Any] | None:
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM players WHERE player_id = ?", (player_id,)
             ).fetchone()
         return self._row(row) if row else None
 
-    def all_players(self) -> List[Dict[str, Any]]:
+    def all_players(self) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._conn.execute("SELECT * FROM players ORDER BY name").fetchall()
         return [self._row(r) for r in rows]
 
-    def to_world_map_rows(self) -> List[Dict[str, Any]]:
+    def to_world_map_rows(self) -> list[dict[str, Any]]:
         """Rows shaped for build_world_map's players section."""
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for p in self.all_players():
             out.append({"id": p["player_id"], "name": p["name"], "sheet": p["sheet"], "hp": p.get("hp")})
         return out
@@ -126,7 +126,7 @@ class PlayerState:
             )
             self._conn.commit()
 
-    def record_card_done(self, player_id: str, card: Dict[str, Any]) -> None:
+    def record_card_done(self, player_id: str, card: dict[str, Any]) -> None:
         """Append a resolved card to the player's knowledge (mark-done bookkeeping)."""
         with self._lock:
             row = self._conn.execute(
@@ -161,7 +161,7 @@ class PlayerState:
             self._conn.commit()
 
     @staticmethod
-    def _card_ref(card: Dict[str, Any]) -> Dict[str, Any]:
+    def _card_ref(card: dict[str, Any]) -> dict[str, Any]:
         return {
             "id": card.get("id", ""),
             "kind": card.get("kind", ""),
@@ -171,7 +171,7 @@ class PlayerState:
         }
 
     @staticmethod
-    def _row(row: tuple) -> Dict[str, Any]:
+    def _row(row: tuple) -> dict[str, Any]:
         return {
             "player_id": row[0],
             "name": row[1],

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -16,7 +16,7 @@ _RRF_K = 60
 _RRF_OVERFETCH = 4
 
 
-def _json_load(blob: Optional[str], default: Any) -> Any:
+def _json_load(blob: str | None, default: Any) -> Any:
     if not blob:
         return default
     try:
@@ -105,7 +105,7 @@ class IndexStore:
             if dim:
                 self._create_vec_table(int(dim))
 
-    def get_meta(self, key: str) -> Optional[str]:
+    def get_meta(self, key: str) -> str | None:
         """Public accessor for index metadata (embedding model identity, etc.)."""
         with self._lock:
             return self._meta_get(key)
@@ -116,14 +116,14 @@ class IndexStore:
             self._meta_set(key, value)
             self._conn.commit()
 
-    def list_paths(self) -> List[str]:
+    def list_paths(self) -> list[str]:
         """All indexed document paths (public API; replaces direct _conn access)."""
         with self._lock:
             return [
                 row["path"] for row in self._conn.execute("SELECT path FROM docs").fetchall()
             ]
 
-    def counts(self) -> Dict[str, int]:
+    def counts(self) -> dict[str, int]:
         """Row counts for docs, chunks and entities (public status surface)."""
         with self._lock:
             docs = self._conn.execute("SELECT COUNT(*) AS n FROM docs").fetchone()["n"]
@@ -131,7 +131,7 @@ class IndexStore:
             entities = self._conn.execute("SELECT COUNT(*) AS n FROM entities").fetchone()["n"]
         return {"docs": int(docs), "chunks": int(chunks), "entities": int(entities)}
 
-    def _meta_get(self, key: str) -> Optional[str]:
+    def _meta_get(self, key: str) -> str | None:
         row = self._conn.execute(
             "SELECT value FROM meta WHERE key=?", (key,)
         ).fetchone()
@@ -166,7 +166,7 @@ class IndexStore:
         with self._lock:
             self._conn.close()
 
-    def upsert_docs(self, docs: List[DocFile]) -> None:
+    def upsert_docs(self, docs: list[DocFile]) -> None:
         with self._lock:
             for d in docs:
                 self._conn.execute(
@@ -177,7 +177,7 @@ class IndexStore:
                 )
             self._conn.commit()
 
-    def replace_chunks_for_doc(self, doc_path: str, chunks: List[Chunk]) -> None:
+    def replace_chunks_for_doc(self, doc_path: str, chunks: list[Chunk]) -> None:
         with self._lock:
             old_ids = [
                 r["chunk_id"]
@@ -210,7 +210,7 @@ class IndexStore:
             self._conn.commit()
 
     def upsert_chunk_embeddings(
-        self, items: List[Tuple[str, np.ndarray]]
+        self, items: list[tuple[str, np.ndarray]]
     ) -> None:
         if not items:
             return
@@ -236,7 +236,7 @@ class IndexStore:
                 )
             self._conn.commit()
 
-    def upsert_entities(self, entities: List[Entity]) -> None:
+    def upsert_entities(self, entities: list[Entity]) -> None:
         with self._lock:
             for e in entities:
                 self._conn.execute(
@@ -254,7 +254,7 @@ class IndexStore:
                 )
             self._conn.commit()
 
-    def get_entity(self, canonical: str) -> Optional[Entity]:
+    def get_entity(self, canonical: str) -> Entity | None:
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM entities WHERE canonical=?", (canonical,)
@@ -269,7 +269,7 @@ class IndexStore:
             source_files=_json_load(row["source_files"], []),
         )
 
-    def all_entities(self) -> List[Entity]:
+    def all_entities(self) -> list[Entity]:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT * FROM entities ORDER BY canonical"
@@ -285,13 +285,13 @@ class IndexStore:
             for r in rows
         ]
 
-    def stale_docs(self, current: Dict[str, float]) -> List[str]:
+    def stale_docs(self, current: dict[str, float]) -> list[str]:
         with self._lock:
             stored = {
                 r["path"]: r["mtime"]
                 for r in self._conn.execute("SELECT path,mtime FROM docs").fetchall()
             }
-        out: List[str] = []
+        out: list[str] = []
         for path, mtime in current.items():
             s = stored.get(path)
             if s is None or abs(float(s) - float(mtime)) > 1e-6:
@@ -319,7 +319,7 @@ class IndexStore:
 
     @staticmethod
     def _sanitize_fts(query: str) -> str:
-        out: List[str] = []
+        out: list[str] = []
         for tok in query.split():
             t = tok.strip().strip('"').strip("'")
             if not t:
@@ -331,13 +331,13 @@ class IndexStore:
 
     def search(
         self,
-        embedding: Optional[np.ndarray] = None,
-        query_text: Optional[str] = None,
+        embedding: np.ndarray | None = None,
+        query_text: str | None = None,
         k: int = 8,
-    ) -> List[Retrieved]:
+    ) -> list[Retrieved]:
         if embedding is None and not query_text:
             return []
-        scores: Dict[str, float] = {}
+        scores: dict[str, float] = {}
         cap = max(k * _RRF_OVERFETCH, 16)
 
         if embedding is not None:
@@ -367,7 +367,7 @@ class IndexStore:
                         (sanitized, cap),
                     ).fetchall()
                 rids = [r["rowid"] for r in fts_rows]
-                rid_to_cid: Dict[int, str] = {}
+                rid_to_cid: dict[int, str] = {}
                 if rids:
                     placeholders = ",".join("?" for _ in rids)
                     with self._lock:
@@ -395,7 +395,7 @@ class IndexStore:
                 ids,
             ).fetchall()
         cdata = {r["chunk_id"]: (r["doc_path"], r["text"]) for r in chunk_rows}
-        results: List[Retrieved] = []
+        results: list[Retrieved] = []
         for cid, score in ranked:
             doc_path, text = cdata.get(cid, ("", ""))
             results.append(

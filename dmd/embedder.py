@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import threading
-from typing import List, Optional
 
 import numpy as np
 
@@ -14,7 +13,7 @@ class Embedder:
     def __init__(self, model_id: str = "BAAI/bge-small-en-v1.5") -> None:
         self._model_id = model_id
         self._model = None
-        self._dim: Optional[int] = None
+        self._dim: int | None = None
         self._lock = threading.Lock()
 
     @property
@@ -22,7 +21,7 @@ class Embedder:
         return self._model_id
 
     @property
-    def dim(self) -> Optional[int]:
+    def dim(self) -> int | None:
         return self._dim
 
     def _ensure_model(self) -> None:
@@ -47,7 +46,7 @@ class Embedder:
                     "or point the cache directory at one already populated."
                 ) from exc
 
-    def embed(self, texts: List[str]) -> np.ndarray:
+    def embed(self, texts: list[str]) -> np.ndarray:
         if not texts:
             return np.zeros((0, 0), dtype=np.float32)
         self._ensure_model()

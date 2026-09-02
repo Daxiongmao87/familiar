@@ -10,7 +10,8 @@ This file's tests pass; the init bug is documented and reported.
 from __future__ import annotations
 
 import json
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import httpx
 import pytest

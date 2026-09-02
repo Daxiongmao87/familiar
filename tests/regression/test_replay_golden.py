@@ -19,13 +19,12 @@ import numpy as np
 import pytest
 
 from dmd.config import load_config_dict
-from dmd.gateway import GatewayError
 from dmd.index_store import IndexStore
 from dmd.init_pass import run_init
 from dmd.lexicon import build_lexicon
 from dmd.orchestrator import JobPool
 from dmd.pipeline import SessionEngine
-from dmd.types import Card, Entity, Utterance
+from dmd.types import Card, Entity
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 GOLDEN = Path(__file__).parent / "golden" / "replay_events.json"
@@ -213,7 +212,7 @@ def _normalize(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 async def test_full_replay_matches_golden(rig: Any, tmp_path: Path) -> None:
-    engine, pool, events, gw = rig
+    engine, pool, events, _gw = rig
     silence = b"\x00\x00" * 320
 
     for user, t0 in (("dm", 0.0), ("alice", 1.0)):

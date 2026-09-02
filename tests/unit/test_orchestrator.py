@@ -9,13 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Awaitable, Callable
-
-import pytest
+from collections.abc import Awaitable, Callable
 
 from dmd.orchestrator import JobPool
 from dmd.types import Card, Job, Priority
-
 
 # ---------------------------------------------------------------------------
 # Helpers

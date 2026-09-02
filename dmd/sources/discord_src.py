@@ -27,8 +27,9 @@ import asyncio
 import inspect
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
+from typing import TYPE_CHECKING, ClassVar, Any
 
 import numpy as np
 
@@ -37,8 +38,6 @@ from dmd.types import PcmChunk
 
 if TYPE_CHECKING:
     import discord
-    from discord.abc import Connectable
-    from discord.sinks import Sink
 
 logger = logging.getLogger(__name__)
 
@@ -57,9 +56,9 @@ else:
     _DISCORD_IMPORT_ERROR = None
 
 try:
+    import discord.sinks.errors as _sink_errors  # noqa: F401  (re-exported below)
     from discord.sinks import Sink as _SinkBase
     from discord.sinks.ogg import OGGSink
-    import discord.sinks.errors as _sink_errors  # noqa: F401  (re-exported below)
 
     HAVE_DISCORD_SINKS = True
 except Exception as _exc:  # pragma: no cover
@@ -109,7 +108,7 @@ def _require_voice_dependencies() -> None:
 
 
 def downmix_resample(
-    samples: "np.ndarray",
+    samples: np.ndarray,
     src_rate: int = 48000,
     dst_rate: int = 16000,
 ) -> bytes:
@@ -142,10 +141,9 @@ def downmix_resample(
     if src_rate <= 0 or dst_rate <= 0:
         raise ValueError(f"sample rates must be positive (got {src_rate}, {dst_rate})")
     n_src = mono.shape[0]
-    n_dst = int(round(n_src * dst_rate / src_rate))
+    n_dst = round(n_src * dst_rate / src_rate)
     if n_dst <= 0:
         return b""
-    x_src_lo = np.arange(n_src, dtype=np.float64)
     x_dst = np.linspace(0.0, float(n_src - 1), num=n_dst, endpoint=True)
     base_idx = np.floor(x_dst).astype(np.int64)
     frac = (x_dst - base_idx.astype(np.float64)).astype(np.float32)
@@ -165,14 +163,14 @@ class _PerUserBuffer:
     samples_emitted: int = 0
     packets_seen: int = 0
     decode_failures: int = 0
-    last_packet_t: Optional[float] = None
+    last_packet_t: float | None = None
     largest_silence_s: float = 0.0
 
 
 class _StreamSink(_SinkBase if _SinkBase is not None else object):  # type: ignore[misc,valid-type]
     """Streaming py-cord sink."""
 
-    __sink_listeners__ = []  # type: ignore[assignment]
+    __sink_listeners__: ClassVar[list] = []  # type: ignore[assignment]
 
     def walk_children(self, with_self: bool = False):  # type: ignore[override]
         if with_self:
@@ -201,7 +199,7 @@ class _StreamSink(_SinkBase if _SinkBase is not None else object):  # type: igno
         self,
         *,
         emit: Callable[[PcmChunk], None],
-        on_packet: Optional[Callable[[str, int, bool], None]] = None,
+        on_packet: Callable[[str, int, bool], None] | None = None,
     ) -> None:
         if not HAVE_DISCORD_SINKS or _SinkBase is None:
             raise RuntimeError(
@@ -212,12 +210,12 @@ class _StreamSink(_SinkBase if _SinkBase is not None else object):  # type: igno
         _SinkBase.__init__(self)
         self._emit = emit
         self._on_packet = on_packet
-        self._buffers: Dict[int, _PerUserBuffer] = {}
+        self._buffers: dict[int, _PerUserBuffer] = {}
         self._bytes_per_frame = 960 * 2 * 2
         self.finished = False
 
     @property
-    def buffers(self) -> Dict[int, _PerUserBuffer]:
+    def buffers(self) -> dict[int, _PerUserBuffer]:
         return self._buffers
 
     def is_opus(self) -> bool:
@@ -275,8 +273,7 @@ class _StreamSink(_SinkBase if _SinkBase is not None else object):  # type: igno
         now = time.monotonic()
         if buf.last_packet_t is not None:
             gap = now - buf.last_packet_t
-            if gap > buf.largest_silence_s:
-                buf.largest_silence_s = gap
+            buf.largest_silence_s = max(buf.largest_silence_s, gap)
         buf.last_packet_t = now
         buf.packets_seen += 1
         buf.pcm_buf.extend(pcm)
@@ -352,7 +349,9 @@ def _tap_intents() -> Any:
 
 def _channel_factory(intents: Any) -> Any:
     """Build a ``discord.Client`` with empty intents. Voice reception works
-    on the media socket independently of gateway intents."""
+
+    on the media socket independently of gateway intents.
+    """
     if not HAVE_DISCORD:
         raise RuntimeError(
             "discord (py-cord) is not installed; cannot construct a Client. "
@@ -386,6 +385,7 @@ class DiscordSource(AudioSource):
     surface — consumers needing them in a Phase-0 spike context can read
     them via the (private) ``_sink.buffers`` mapping, while production
     consumers will subscribe only to the chunk stream.
+
     """
 
     def __init__(
@@ -433,12 +433,12 @@ class DiscordSource(AudioSource):
         self._self_mute = bool(self_mute)
         self._self_deaf = bool(self_deaf)
         self._stop_event = asyncio.Event()
-        self._sink: Optional[_StreamSink] = None
+        self._sink: _StreamSink | None = None
         self._stats_on_packet: list[tuple[str, int, bool]] = []
-        self.resolved_channel: Optional[Any] = None
+        self.resolved_channel: Any | None = None
 
     @property
-    def sink(self) -> Optional[_StreamSink]:
+    def sink(self) -> _StreamSink | None:
         """Internal sink exposing per-user stats for the spike harness only."""
         return self._sink
 
@@ -630,13 +630,13 @@ class DiscordSource(AudioSource):
 
         client.event(on_voice_state_update)
 
-        async def _on_done(exc: Optional[BaseException]) -> None:
+        async def _on_done(exc: BaseException | None) -> None:
             if exc is not None:
                 logger.warning("sink finished_callback received exception: %r", exc)
             else:
                 logger.info("sink finished_callback returned cleanly")
 
-        client_task: Optional[asyncio.Task[None]] = None
+        client_task: asyncio.Task[None] | None = None
         voice: Any = None
         try:
             client_task = asyncio.create_task(

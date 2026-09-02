@@ -45,7 +45,7 @@ def detect_trigger_rule(text: str) -> bool:
     return False
 
 
-def _has_fast_role(gw: "Gateway | None") -> bool:
+def _has_fast_role(gw: Gateway | None) -> bool:
     if gw is None:
         return False
     cfg = getattr(gw, "_cfg", None) or getattr(gw, "cfg", None)
@@ -57,7 +57,7 @@ def _has_fast_role(gw: "Gateway | None") -> bool:
     return getattr(models, "fast", None) is not None
 
 
-async def detect_trigger(gw: "Gateway | None", text: str) -> tuple[bool, str]:
+async def detect_trigger(gw: Gateway | None, text: str) -> tuple[bool, str]:
     """Classify transcript intent. Returns (is_trigger, kind).
 
     When ``gw`` exposes a configured fast role, the fast lane LLM is asked via

@@ -78,7 +78,6 @@ class VoicePresence:
                 logger.info("Familiar moved to %s for DM", dm_channel.name)
             else:
                 # fresh join via channel.connect
-                from discord.voice import VoiceClient as _VC
 
                 # use guild's voice channel connect helper
                 self._voice = await dm_channel.connect()

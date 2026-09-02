@@ -62,7 +62,7 @@ def _linear_resample(mono: np.ndarray, src_rate: int, target_rate: int) -> np.nd
     if src_rate == target_rate or len(mono) == 0:
         return mono.astype(np.int16, copy=False)
     duration = len(mono) / float(src_rate)
-    target_len = max(1, int(round(duration * target_rate)))
+    target_len = max(1, round(duration * target_rate))
     src_x = np.arange(len(mono), dtype=np.float64)
     tgt_x = np.linspace(0, len(mono) - 1, num=target_len, dtype=np.float64)
     resampled = np.interp(tgt_x, src_x, mono.astype(np.float64))
@@ -78,6 +78,7 @@ def wav_to_pcm16k(path: str, target_rate: int = 16000) -> bytes:
 
 class ReplaySource(AudioSource):
     """Replay one wav per user. Chunks are 100 ms; trailing 0.7 s silence is
+
     emitted at the end of every track so the VAD finalizes the last utterance.
     """
 
@@ -148,7 +149,7 @@ class ReplaySource(AudioSource):
         remaining = float(seconds)
         while remaining > 1e-9:
             this = min(chunk_seconds, remaining)
-            n = max(1, int(round(this * self.sample_rate)))
+            n = max(1, round(this * self.sample_rate))
             self.emit(
                 PcmChunk(
                     user_id=user_id,

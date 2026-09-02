@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 import numpy as np
 
@@ -50,7 +50,7 @@ def _remove_missing_docs(
         try:
             store.remove_doc(path)
             removed.append(path)
-        except Exception as e:
+        except Exception:
             pass
     return removed
 
@@ -109,7 +109,7 @@ async def run_init(
         if vecs.shape[0] == len(chunk_ids) and vecs.size > 0:
             _cb(progress_cb, "upsert_chunk_embeddings")
             store.upsert_chunk_embeddings(
-                list(zip(chunk_ids, [vecs[i] for i in range(vecs.shape[0])]))
+                list(zip(chunk_ids, [vecs[i] for i in range(vecs.shape[0])], strict=True))
             )
 
     _cb(progress_cb, "extract_entities")

@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 import pytest
 import uvicorn
+from mock_server import MockState, create_mock_app
 
 from dmd.config import load_config_dict
 from dmd.gateway import Gateway
@@ -24,8 +25,6 @@ from dmd.orchestrator import JobPool
 from dmd.pipeline import SessionEngine
 from dmd.server import EventBus, create_app
 from dmd.types import Entity
-
-from mock_server import MockState, create_mock_app
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -135,7 +134,7 @@ def stack(tmp_path_factory: pytest.TempPathFactory) -> Any:
     store = IndexStore(str(tmp / "index.db"))
     gw = Gateway(cfg)
 
-    from dmd.scanner import scan_folder, chunk_docs
+    from dmd.scanner import chunk_docs, scan_folder
 
     docs = scan_folder(str(campaign))
     store.upsert_docs(docs)

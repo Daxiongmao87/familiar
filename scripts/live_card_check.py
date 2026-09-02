@@ -13,16 +13,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from dmd.config import load_config  # noqa: E402
-from dmd.gateway import Gateway  # noqa: E402
-from dmd.index_store import IndexStore  # noqa: E402
-from dmd.embedder import Embedder  # noqa: E402
-from dmd.lexicon import build_lexicon  # noqa: E402
-from dmd.scanner import scan_folder, chunk_docs  # noqa: E402
-from dmd.orchestrator import JobPool  # noqa: E402
-from dmd.pipeline import SessionEngine  # noqa: E402
-from dmd.triggers import detect_trigger  # noqa: E402
-from dmd.types import Utterance  # noqa: E402
+from dmd.config import load_config
+from dmd.embedder import Embedder
+from dmd.gateway import Gateway
+from dmd.index_store import IndexStore
+from dmd.lexicon import build_lexicon
+from dmd.orchestrator import JobPool
+from dmd.pipeline import SessionEngine
+from dmd.scanner import chunk_docs, scan_folder
+from dmd.triggers import detect_trigger
+from dmd.types import Utterance
 
 CAMPAIGN = str(ROOT / "tests" / "e2e" / "campaign")
 INDEX = "/tmp/live_index.db"

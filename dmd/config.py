@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError
@@ -39,49 +39,57 @@ def _expand(value: Any) -> Any:
 
 
 class EndpointConfig(BaseModel):
+    """Base shape for an OpenAI-compatible endpoint (URL, optional key/model/extra body)."""
     base_url: str
-    api_key: Optional[str] = None
-    model_id: Optional[str] = None
+    api_key: str | None = None
+    model_id: str | None = None
     extra_body: dict[str, Any] = Field(default_factory=dict)
 
 
 class SynthesisRole(EndpointConfig):
+    """Generation role endpoint; must name a model_id."""
     model_id: str  # required for generation roles
 
 
 class FastRole(SynthesisRole):
+    """Fast/cheap synthesis endpoint for low-latency roles."""
     pass
 
 
 class VisionRole(BaseModel):
+    """Optional vision-model endpoint (disabled by default)."""
     enabled: bool = False
-    base_url: Optional[str] = None
-    api_key: Optional[str] = None
-    model_id: Optional[str] = None
+    base_url: str | None = None
+    api_key: str | None = None
+    model_id: str | None = None
     extra_body: dict[str, Any] = Field(default_factory=dict)
 
 
 class SttRole(EndpointConfig):
+    """Speech-to-text endpoint (openai or whisperx dialect)."""
     base_url: str
     dialect: str = "openai"  # "openai" = /v1/audio/transcriptions; "whisperx" = POST /transcribe
 
 
 class EmbeddingsRole(BaseModel):
+    """Embedding provider: local fastembed model or remote endpoint."""
     provider: str = "local"  # local | endpoint
     model_id: str = "BAAI/bge-small-en-v1.5"
-    base_url: Optional[str] = None
-    api_key: Optional[str] = None
+    base_url: str | None = None
+    api_key: str | None = None
 
 
 class ModelsConfig(BaseModel):
+    """All model-role endpoints used by the live path."""
     synthesis: SynthesisRole
-    fast: Optional[FastRole] = None
-    vision: Optional[VisionRole] = None
+    fast: FastRole | None = None
+    vision: VisionRole | None = None
     stt: SttRole
     embeddings: EmbeddingsRole = EmbeddingsRole()
 
 
 class OrchestrationConfig(BaseModel):
+    """Bounded async job-orchestration tuning."""
     max_concurrent: int = 3
     job_timeout_s: float = 20.0
     stale_after_s: float = 120.0
@@ -104,6 +112,7 @@ class AgentConfig(BaseModel):
     # (detect_trigger yields loot/lore/rules/other); the rest go ephemeral.
 
 class SttPipelineConfig(BaseModel):
+    """STT chunking and VAD timing parameters."""
     sample_rate: int = 16000
     silence_ms: int = 700
     min_utterance_ms: int = 400
@@ -111,28 +120,32 @@ class SttPipelineConfig(BaseModel):
 
 
 class DiscordConfig(BaseModel):
-    token: Optional[str] = None
-    guild_id: Optional[str] = None
-    channel_id: Optional[str] = None  # optional pin; otherwise follow DM / auto-join
-    dm_user_id: Optional[str] = None  # authority to follow — Familiar joins their VC
+    """Discord bot credentials and voice-presence options."""
+    token: str | None = None
+    guild_id: str | None = None
+    channel_id: str | None = None  # optional pin; otherwise follow DM / auto-join
+    dm_user_id: str | None = None  # authority to follow — Familiar joins their VC
     self_mute: bool = True
     self_deaf: bool = False
 
 
 class ProjectConfig(BaseModel):
-    path: Optional[str] = None
+    """The campaign project path and display name."""
+    path: str | None = None
     name: str = "Untitled Campaign"
 
 
 class ServerConfig(BaseModel):
+    """Web server bind host/port and optional TLS cert/key."""
     host: str = "0.0.0.0"
     port: int = 8760
     https_enabled: bool = False
-    cert_file: Optional[str] = None
-    key_file: Optional[str] = None
+    cert_file: str | None = None
+    key_file: str | None = None
 
 
 class AppConfig(BaseModel):
+    """Top-level application configuration model."""
     project: ProjectConfig = ProjectConfig()
     models: ModelsConfig
     orchestration: OrchestrationConfig = OrchestrationConfig()
@@ -144,7 +157,7 @@ class AppConfig(BaseModel):
 
 def load_config(path: str) -> AppConfig:
     """Load and validate config.yaml. Raises ConfigError on any problem."""
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
     if not isinstance(raw, dict):
         raise ConfigError("config file must contain a YAML mapping")

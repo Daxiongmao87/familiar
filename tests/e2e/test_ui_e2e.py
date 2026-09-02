@@ -12,7 +12,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-
 from mock_server import _stable_vec  # reuse the deterministic vector helper
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -86,7 +85,7 @@ def test_ui_end_to_end_with_screenshots(stack) -> None:
         except Exception:
             raise AssertionError(
                 "card never rendered; console log:\n" + "\n".join(console_log[-40:])
-            )
+            ) from None
         title = page.text_content('[data-testid="card"] .card-title') or ""
         assert "Loot Table" in title
         body_text = page.text_content('[data-testid="card"] .card-body') or ""

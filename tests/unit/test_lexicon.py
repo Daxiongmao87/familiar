@@ -5,13 +5,11 @@ from __future__ import annotations
 import pytest
 
 from dmd.lexicon import (
-    COMMON_WORDS,
     build_lexicon,
     correct_text,
     link_entities,
 )
 from dmd.types import Entity, LexiconEntry
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -89,7 +87,7 @@ def test_canonical_wins_case_insensitive_on_alias():
         Entity(canonical="Gandalf", aliases=["FRODO"], etype="character", weight=1.0),
     ]
     entries = build_lexicon(entities)
-    gandalf = [e for e in entries if e.canonical == "Gandalf"][0]
+    gandalf = next(e for e in entries if e.canonical == "Gandalf")
     # "FRODO" aliases "frodo" canonical -> dropped.
     assert all(v.lower() != "frodo" for v in gandalf.variants)
 

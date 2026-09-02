@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import heapq
 import time
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 from .types import Card, Job
 

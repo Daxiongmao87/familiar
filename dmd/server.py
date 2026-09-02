@@ -10,16 +10,17 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-
 QUEUE_MAX = 512
+BACKGROUND_TASKS: set[asyncio.Task] = set()
 
 
 class EventBus:
@@ -37,8 +38,9 @@ class EventBus:
         self._loop = asyncio.get_running_loop()
         if self._preloop:
             buffered, self._preloop = self._preloop, []
+            _flushed: list = []
             for ev in buffered:
-                asyncio.ensure_future(self.publish(ev))
+                _flushed.extend(asyncio.ensure_future(self.publish(ev)))
 
     def publish_sync(self, event: dict[str, Any]) -> None:
         """Sync/thread-safe bridge for producers without an event loop handle."""
@@ -132,9 +134,9 @@ def create_app(
     cfg: Any = None,
     engine: Any = None,
     init_runner: Any = None,
-    status_provider: Optional[Callable[[], dict[str, Any]]] = None,
-    web_dir: Optional[str | Path] = None,
-    bus: Optional[EventBus] = None,
+    status_provider: Callable[[], dict[str, Any]] | None = None,
+    web_dir: str | Path | None = None,
+    bus: EventBus | None = None,
     browser_source: Any = None,
 ) -> FastAPI:
     """Build the FastAPI app with optional injected dependencies.
@@ -145,7 +147,9 @@ def create_app(
     """
     bus = bus or EventBus()
     provider = status_provider or _default_status_provider
-    web_path = Path(web_dir) if web_dir is not None else Path(__file__).resolve().parent.parent / "web"
+    web_path = (
+        Path(web_dir) if web_dir is not None else Path(__file__).resolve().parent.parent / "web"
+    )
     if not web_path.exists():
         web_path.mkdir(parents=True, exist_ok=True)
 
@@ -271,7 +275,9 @@ def create_app(
                     }
                 )
 
-        asyncio.create_task(_run())
+        _t = asyncio.create_task(_run())
+        BACKGROUND_TASKS.add(_t)
+        _t.add_done_callback(BACKGROUND_TASKS.discard)
         return {"ok": True}
 
     @app.get("/api/guild/members")
@@ -306,7 +312,12 @@ def create_app(
                         {
                             "id": str(user.get("id", "")),
                             "username": str(user.get("username", "")),
-                            "display_name": str(m.get("nick") or user.get("global_name") or user.get("username") or ""),
+                            "display_name": str(
+                                m.get("nick")
+                                or user.get("global_name")
+                                or user.get("username")
+                                or ""
+                            ),
                             "avatar": str(user.get("avatar") or ""),
                         }
                     )
@@ -353,9 +364,10 @@ def create_app(
                             if resp.status_code == 200:
                                 for m in resp.json():
                                     user = m.get("user") or {}
-                                    if str(user.get("username", "")).lower() == dm_id.lower() or str(
-                                        m.get("nick") or ""
-                                    ).lower() == dm_id.lower():
+                                    if (
+                                        str(user.get("username", "")).lower() == dm_id.lower()
+                                        or str(m.get("nick") or "").lower() == dm_id.lower()
+                                    ):
                                         dm_id = str(user.get("id"))
                                         break
                     except Exception:
@@ -367,7 +379,6 @@ def create_app(
         try:
             import yaml
 
-            config_path = getattr(cfg, "_config_path", None) or "config.yaml"
             raw_path = str(getattr(cfg, "_config_path", None) or "config.yaml")
             p = Path(raw_path)
             if not p.exists():
@@ -381,7 +392,6 @@ def create_app(
         except Exception:
             pass
         return {"ok": True, "dm_user_id": dm_id}
-
 
     # --- Full config editor (GET/POST /api/config) ---
     SECRET_PATHS = (
@@ -473,6 +483,7 @@ def create_app(
             return {"ok": True, "changed": changed, "restart_required": bool(changed)}
         except Exception as e:
             return {"ok": False, "detail": str(e)}
+
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket) -> None:
         await websocket.accept()
@@ -586,7 +597,7 @@ def _make_init_runner(
             async def run_init(
                 self,
                 path: str,
-                progress_cb: Optional[Callable[[str], Awaitable[None]]] = None,
+                progress_cb: Callable[[str], Awaitable[None]] | None = None,
             ) -> dict[str, Any]:
                 return await _run_init(
                     path=path,
@@ -766,8 +777,7 @@ def main(config_path: str) -> None:
             from dmd.embedder import Embedder
 
             emb_cfg = getattr(cfg.models, "embeddings", None)
-            model_id = getattr(emb_cfg, "model_id", "BAAI/bge-small-en-v1.5") or "BAAI/bge-small-en-v1.5"
-            embedder = Embedder(model_id=model_id)
+            embedder = Embedder(model_id=emb_cfg.model_id) if emb_cfg else Embedder()
         except Exception:
             embedder = None
 
@@ -804,6 +814,7 @@ def main(config_path: str) -> None:
         try:
             consume = getattr(engine, "consume_source", None)
             if callable(consume):
+
                 async def _browser_consumer() -> None:
                     try:
                         await consume(browser_source)
@@ -816,7 +827,9 @@ def main(config_path: str) -> None:
                 async def _start_browser_consumer() -> None:
                     import asyncio
 
-                    asyncio.create_task(_browser_consumer())
+                    _t = asyncio.create_task(_browser_consumer())
+                    BACKGROUND_TASKS.add(_t)
+                    _t.add_done_callback(BACKGROUND_TASKS.discard)
 
         except Exception:
             pass
@@ -842,9 +855,20 @@ def main(config_path: str) -> None:
                 except Exception:
                     pass
 
-    host = os.environ.get("DMD_HOST", getattr(getattr(cfg, "server", None), "host", "0.0.0.0") or "0.0.0.0") if cfg else os.environ.get("DMD_HOST", "0.0.0.0")
-    port = int(os.environ.get("DMD_PORT", str(getattr(getattr(cfg, "server", None), "port", 8760) or 8760)) or 8760)
-    use_https = bool(getattr(getattr(cfg, "server", None), "https_enabled", False)) if cfg else False
+    host = (
+        os.environ.get(
+            "DMD_HOST", getattr(getattr(cfg, "server", None), "host", "0.0.0.0") or "0.0.0.0"
+        )
+        if cfg
+        else os.environ.get("DMD_HOST", "0.0.0.0")
+    )
+    port = int(
+        os.environ.get("DMD_PORT", str(getattr(getattr(cfg, "server", None), "port", 8760) or 8760))
+        or 8760
+    )
+    use_https = (
+        bool(getattr(getattr(cfg, "server", None), "https_enabled", False)) if cfg else False
+    )
     cert_file = getattr(getattr(cfg, "server", None), "cert_file", None) if cfg else None
     key_file = getattr(getattr(cfg, "server", None), "key_file", None) if cfg else None
 
@@ -852,12 +876,21 @@ def main(config_path: str) -> None:
         import uvicorn
 
         if use_https and cert_file and key_file:
-            uvicorn.run(app, host=host, port=port, log_level="info", ssl_certfile=str(cert_file), ssl_keyfile=str(key_file))
+            uvicorn.run(
+                app,
+                host=host,
+                port=port,
+                log_level="info",
+                ssl_certfile=str(cert_file),
+                ssl_keyfile=str(key_file),
+            )
         else:
             if use_https:
                 import logging
 
-                logging.getLogger(__name__).warning("server.https_enabled true but cert_file/key_file missing — falling back to http")
+                logging.getLogger(__name__).warning(
+                    "server.https_enabled true but cert_file/key_file missing — falling back to http"
+                )
             uvicorn.run(app, host=host, port=port, log_level="info")
     finally:
         if gateway is not None:

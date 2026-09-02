@@ -1,0 +1,52 @@
+# Ruff configuration for the voice-chat-dm-assistant project.
+#
+# Aligns with the project's documented conventions (AGENTS.md "In-code documentation"):
+# "a file-level doc comment, plus doc comments on every module, class, and public
+# function." The rule set below is scoped to exactly that requirement (D100 module,
+# D101 class, D103 public function) plus formatting rules — not the full pydocstyle
+# set, which over-enforces on private methods, __init__, and magic methods that this
+# codebase fills with inline data-model fields rather than docstrings.
+#
+# Line length: AGENTS.md forbids lines >100 chars, so ruff's default of 88 is
+# relaxed to 100 to match the documented convention.
+#
+# BLE001 and S110 are excluded on purpose: this codebase uses broad `except Exception`
+# in two deliberate patterns — (a) building a structured error dict from the exception,
+# and (b) fire-and-forget best-effort cleanup (e.g. worker/shutdown teardown). Those are
+# intentional design choices, not silent error suppression, so they are documented here
+# rather than hand-patched at every call site.
+
+line-length = 100
+
+exclude = [
+    ".venv",
+    ".ruff_cache",
+    "__pycache__",
+]
+
+[lint]
+select = [
+    "D100",  # module docstring
+    "D101",  # public class docstring
+    "D103",  # public function docstring
+    "D205",  # 1 blank line required between summary and description
+    "D209",  # multi-line docstring closing quotes on separate line
+    "D413",  # blank line after last docstring section
+    "E4",    # imports
+    "E7",    # syntax/compare
+    "E9",    # syntax errors
+    "F",     # pyflakes (unused imports/vars, undefined names)
+    "B",     # flake8-bugbear (safe bug patterns)
+    "UP",    # pyupgrade (modern stdlib typing)
+    "RUF",   # ruff-specific
+]
+
+# Intentional best-effort / error-dict patterns (see header). Documented as deliberate
+# design choices in this config rather than hand-patched at every call site.
+ignore = ["BLE001", "S110"]
+
+# Test files and throwaway scripts are conventional exemption zones: they do not
+# carry docstrings and frequently import after use (E402) for fixture setup.
+[lint.per-file-ignores]
+"tests/**" = ["D", "E402"]
+"scripts/**" = ["D", "E402"]

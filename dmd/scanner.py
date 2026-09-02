@@ -6,7 +6,6 @@ import hashlib
 import os
 import re
 from dataclasses import dataclass
-from typing import List
 
 import yaml
 
@@ -19,26 +18,28 @@ _INLINE_TAG_RE = re.compile(r"(?:^|[\s(\[])#([A-Za-z][A-Za-z0-9_\-/]+)")
 
 @dataclass(slots=True)
 class DocFile:
+    """A parsed markdown/text source file (relpath + content + mtime)."""
     relpath: str
     title: str
     frontmatter: dict
-    links: List[str]
-    tags: List[str]
-    headings: List[str]
+    links: list[str]
+    tags: list[str]
+    headings: list[str]
     content: str
     mtime: float
 
 
 @dataclass(slots=True)
 class Chunk:
+    """A fixed-size text slice of a DocFile for indexing/retrieval."""
     chunk_id: str
     doc_id: str
     text: str
-    heading_path: List[str]
+    heading_path: list[str]
     pos: int
 
 
-def _hash_chunk(doc_path: str, heading_path: List[str], pos: int, text: str) -> str:
+def _hash_chunk(doc_path: str, heading_path: list[str], pos: int, text: str) -> str:
     h = hashlib.sha1()
     h.update(doc_path.encode("utf-8"))
     h.update(b"\x00")
@@ -50,11 +51,11 @@ def _hash_chunk(doc_path: str, heading_path: List[str], pos: int, text: str) -> 
     return "c" + h.hexdigest()[:15]
 
 
-def _split_sections(content: str) -> List[tuple[List[str], str]]:
+def _split_sections(content: str) -> list[tuple[list[str], str]]:
     lines = content.splitlines(keepends=True)
-    sections: List[tuple[List[str], str]] = []
-    stack: List[tuple[int, str]] = []
-    buf: List[str] = []
+    sections: list[tuple[list[str], str]] = []
+    stack: list[tuple[int, str]] = []
+    buf: list[str] = []
     emitted_pre = False
 
     def flush() -> None:
@@ -85,14 +86,14 @@ def _split_sections(content: str) -> List[tuple[List[str], str]]:
     return sections
 
 
-def _hard_split(text: str, target: int, overlap: int) -> List[str]:
+def _hard_split(text: str, target: int, overlap: int) -> list[str]:
     if len(text) <= target:
         return [text]
     sentence_re = re.compile(r"(?<=[.!?])\s+")
     sentences = sentence_re.split(text)
     if len(sentences) == 1:
         return [text[i : i + target] for i in range(0, len(text), target)]
-    chunks: List[str] = []
+    chunks: list[str] = []
     cur = ""
     for s in sentences:
         if not cur:
@@ -111,9 +112,9 @@ def _hard_split(text: str, target: int, overlap: int) -> List[str]:
     return chunks
 
 
-def scan_folder(root: str) -> List[DocFile]:
+def scan_folder(root: str) -> list[DocFile]:
     """Walk root for *.md/*.txt/*.markdown and parse each into a DocFile."""
-    docs: List[DocFile] = []
+    docs: list[DocFile] = []
     root = os.path.abspath(root)
     for dirpath, _dirnames, filenames in os.walk(root):
         for name in sorted(filenames):
@@ -123,7 +124,7 @@ def scan_folder(root: str) -> List[DocFile]:
             full = os.path.join(dirpath, name)
             relpath = os.path.relpath(full, root).replace(os.sep, "/")
             try:
-                with open(full, "r", encoding="utf-8") as f:
+                with open(full, encoding="utf-8") as f:
                     raw = f.read()
                 mtime = os.stat(full).st_mtime
             except OSError:
@@ -141,7 +142,7 @@ def scan_folder(root: str) -> List[DocFile]:
                     fm = {}
                 body = raw[m.end():]
 
-            tags: List[str] = []
+            tags: list[str] = []
             fm_tags = fm.get("tags")
             if isinstance(fm_tags, list):
                 for t in fm_tags:
@@ -159,13 +160,13 @@ def scan_folder(root: str) -> List[DocFile]:
 
             links = _WIKILINK_RE.findall(body)
             seen: set = set()
-            unique_links: List[str] = []
+            unique_links: list[str] = []
             for ln in links:
                 if ln not in seen:
                     seen.add(ln)
                     unique_links.append(ln)
 
-            headings: List[str] = []
+            headings: list[str] = []
             for line in body.splitlines():
                 mh = _ATX_RE.match(line)
                 if mh:
@@ -201,13 +202,13 @@ def scan_folder(root: str) -> List[DocFile]:
 
 
 def chunk_docs(
-    docs: List[DocFile], target_chars: int = 800, overlap: int = 100
-) -> List[Chunk]:
+    docs: list[DocFile], target_chars: int = 800, overlap: int = 100
+) -> list[Chunk]:
     """Split each doc into chunks, preferring markdown heading boundaries."""
-    out: List[Chunk] = []
+    out: list[Chunk] = []
     for doc in docs:
         sections = _split_sections(doc.content)
-        merged: List[tuple[List[str], str]] = []
+        merged: list[tuple[list[str], str]] = []
         i = 0
         while i < len(sections):
             path, text = sections[i]

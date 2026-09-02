@@ -45,13 +45,32 @@
   to be asked for a capability that the marketplace already provides.
 - Agent artifacts are gitignored: the project's .gitignore covers the
   artifacts agents produce (screenshots, captured test output, logs, other
-  ephemeral verification evidence). When a new kind of artifact appears,
-  add it to .gitignore (see RULES.md, "Evidence and artifacts").
+  ephemeral verification evidence), the agent instruction files themselves
+  (AGENTS.md, CLAUDE.md, .agents/, .omp/, .claude/, .opencode/, .cursor/),
+  and real configuration/environment files (.env, credentials, local
+  overrides), whose templates are committed instead. When a new kind of
+  artifact appears, add it to .gitignore (see RULES.md, "Evidence and
+  artifacts", "Configuration and environment", "Agent artifacts").
+
 
 ## Coding style and documentation
 
 - Strict, explicit state modeling. Preserve existing module boundaries.
 - Naming follows the conventions already in the codebase.
+- Engineering fundamentals (RULES.md, "Engineering principles"): verify
+  before you build on a prior — check installed versions, real behavior,
+  and environment state instead of coding from memory; priors are neither
+  conventions nor proof of modern practice — read conventions from this
+  codebase, establish current practice from live sources; DRY —
+  one authoritative home for each piece of knowledge; YAGNI — build what
+  today's contract needs, nothing more; design big to small — architecture
+  and module contracts before the code that fills them in.
+- Patterns (RULES.md, "Design patterns and convention priority"):
+  conventional patterns first; a custom pattern only with an inferred
+  convention following the project -> industry -> aligned-new priority.
+- Configuration (RULES.md, "Configuration and environment"):
+  environment- and deployment-varying values are read from config, never
+  hardcoded; real config/env files are gitignored, templates committed.
 - In-code documentation is the default (RULES.md, "Documentation in code"):
   a file-level doc comment, plus doc comments on every module, class, and
   public function in the language's standard form. Where no convention is
@@ -63,6 +82,9 @@
 
 - Tests prove behavior, not plumbing: state transitions, invariants, error
   paths, and the contract the code claims.
+- Regression discipline (RULES.md, "Testing"): every bug fix carries a
+  regression test that was red against the defect and green after the fix,
+  landed with the fix, and pinned at the layer where the defect lived.
 - MVP scope (RULES.md, "Testing"): core paths and primary failure modes.
   Edge cases are post-MVP and never block the MVP.
 - Test results are ephemeral: capture them, use them, never commit them.
@@ -166,6 +188,8 @@ A change is done when:
 
 - the behavior works as specified and was verified by running it;
 - the relevant tests pass;
+- a bug fix includes a regression test that failed against the defect and
+  passes unchanged after the fix (RULES.md, "Testing");
 - a changelog Unreleased entry (or explicit exclusion) exists;
 - RULES.md is respected: hard rules unviolated, any over-long line is
   deliberate, ephemeral artifacts uncommitted;

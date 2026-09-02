@@ -4,10 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from dmd.scanner import DocFile, chunk_docs, scan_folder
-
 
 # ---------------------------------------------------------------------------
 # Helpers

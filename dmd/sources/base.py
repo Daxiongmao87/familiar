@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from typing import AsyncIterator, Optional
+from collections.abc import AsyncIterator
 
 from dmd.types import PcmChunk
 
@@ -25,7 +25,7 @@ class AudioSource(ABC):
     async def run(self) -> None:
         """Produce frames until stop() is awaited. Must push None on termination."""
 
-    def emit(self, chunk: Optional[PcmChunk]) -> None:
+    def emit(self, chunk: PcmChunk | None) -> None:
         self._queue.put_nowait(chunk)
 
     async def start(self) -> AsyncIterator[PcmChunk]:
@@ -36,7 +36,7 @@ class AudioSource(ABC):
         self._running = False
         self._queue.put_nowait(None)
 
-    def __aiter__(self) -> "AudioSource":
+    def __aiter__(self) -> AudioSource:
         return self
 
     async def __anext__(self) -> PcmChunk:

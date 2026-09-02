@@ -12,7 +12,8 @@ the monitor decoupled from engine internals and easy to test.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Callable, Dict, Optional
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 _MONITOR_SYSTEM = (
     "You are a proactive DM monitor for a live tabletop session. Read the recent "
@@ -29,7 +30,7 @@ _MONITOR_SYSTEM = (
     "events that are not in the transcript."
 )
 
-_MONITOR_SCHEMA: Dict[str, Any] = {
+_MONITOR_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "action": {"type": "string", "enum": ["surface", "card_done", "none"]},
@@ -44,7 +45,7 @@ _MONITOR_SCHEMA: Dict[str, Any] = {
 _MIN_TRANSCRIPT_CHARS = 40
 
 
-def _parse(result: object) -> Optional[Dict[str, Any]]:
+def _parse(result: object) -> dict[str, Any] | None:
     if not isinstance(result, dict):
         return None
     action = result.get("action")
@@ -62,8 +63,8 @@ class TranscriptMonitor:
         cfg: Any,
         get_transcript: Callable[[], str],
         get_scene: Callable[[], str],
-        on_action: Callable[[Dict[str, Any]], Awaitable[None]],
-        cadence_s: Optional[float] = None,
+        on_action: Callable[[dict[str, Any]], Awaitable[None]],
+        cadence_s: float | None = None,
     ) -> None:
         self.gw = gw
         self.cfg = cfg
@@ -71,7 +72,7 @@ class TranscriptMonitor:
         self.get_scene = get_scene
         self.on_action = on_action
         self.cadence = cadence_s if cadence_s is not None else getattr(cfg, "monitor_cadence_s", 30.0)
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._stopping = False
         self.ticks = 0
 
@@ -114,7 +115,7 @@ class TranscriptMonitor:
         if verdict and verdict.get("action") not in (None, "none"):
             await self.on_action(verdict)
 
-    async def _judge(self, transcript: str, scene: str) -> Optional[Dict[str, Any]]:
+    async def _judge(self, transcript: str, scene: str) -> dict[str, Any] | None:
         user = (
             f"RECENT TRANSCRIPT:\n{transcript[-4000:]}\n\n"
             f"CURRENT SCENE CONTEXT:\n{scene[-1500:] or '(none)'}"

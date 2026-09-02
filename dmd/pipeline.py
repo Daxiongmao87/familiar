@@ -1,4 +1,5 @@
 """Session runtime: STT over VAD, lexicon post-correction, trigger detection,
+
 synthesis-job submission, and source consumption.
 """
 
@@ -8,7 +9,8 @@ import struct
 import time
 import uuid
 from collections import deque
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 from .agent import AgentResult, WorkerAgent
 from .config import AppConfig
@@ -85,6 +87,7 @@ def _make_job(
 
 class SessionEngine:
     """Owns per-session state: rolling transcript, VAD buffers, lexicon cache,
+
     embedding, the agentic worker, and the synthesis job pool.
 
     v2: triggers and manual queries route to a WorkerAgent (an agentic tool
@@ -100,12 +103,12 @@ class SessionEngine:
         store: IndexStore,
         gw: Any,
         entries: list[LexiconEntry],
-        embedder: Optional[Embedder],
+        embedder: Embedder | None,
         pool: Any,
         on_event: Callable[[dict], None],
         project_path: str = "",
-        tool_registry: Optional[Any] = None,
-        player_state: Optional[Any] = None,
+        tool_registry: Any | None = None,
+        player_state: Any | None = None,
         world_map: str = "",
     ) -> None:
         self.cfg = cfg
@@ -131,7 +134,7 @@ class SessionEngine:
             embedder=embedder,
             tool_registry=tool_registry,
         )
-        self._monitor: Optional[TranscriptMonitor] = None
+        self._monitor: TranscriptMonitor | None = None
 
     @property
     def recent_utterances(self) -> list[Utterance]:
@@ -272,7 +275,7 @@ class SessionEngine:
         ent = f" Entities mentioned: {', '.join(entities)}." if entities else ""
         return f"The DM triggered a {kind} intent. Produce {kind_hint}.{ent}"
 
-    async def _generate_card(self, ctx: dict) -> Optional[Card]:
+    async def _generate_card(self, ctx: dict) -> Card | None:
         """Run the agentic worker for a trigger/manual query.
 
         Card tier returns a Card (the pool's on_card fires). Ephemeral tier
@@ -289,7 +292,7 @@ class SessionEngine:
                 trigger_portion=trigger_portion,
                 transcript=transcript,
             )
-        except Exception as exc:  # noqa: BLE001 — a bad agent run must not kill the session
+        except Exception as exc:
             result = AgentResult(tier=tier, error=f"{type(exc).__name__}: {exc}")
 
         entities = ctx.get("entities", []) or []
@@ -392,7 +395,7 @@ class SessionEngine:
                 }
                 job = _make_job("monitor", ctx, Priority.TRIGGER, context_window_s=120.0)
 
-                async def _work() -> Optional[Card]:
+                async def _work() -> Card | None:
                     return await self._generate_card(ctx)
 
                 await self.pool.submit(job, _work)

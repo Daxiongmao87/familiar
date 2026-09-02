@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass(slots=True)
@@ -26,10 +26,11 @@ class Utterance:
     text: str
     t_start: float
     t_end: float
-    raw_text: Optional[str] = None  # pre-correction transcript if available
+    raw_text: str | None = None  # pre-correction transcript if available
 
 
 class Priority(int, Enum):
+    """Scene priority levels for the live fast-lane trigger router."""
     AMBIENT = 0
     TRIGGER = 1
     MANUAL = 2
@@ -74,6 +75,7 @@ class Entity:
 
 @dataclass(slots=True)
 class LexiconEntry:
+    """A lexicon entry: canonical form, variants, and matched weight."""
     canonical: str
     variants: list[str]
     etype: str
@@ -94,6 +96,7 @@ class ToolSpec:
 
 @dataclass(slots=True)
 class Retrieved:
+    """A retrieved document plus its text snippet."""
     doc_id: str
     source: str
     score: float

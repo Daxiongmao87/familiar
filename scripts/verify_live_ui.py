@@ -20,18 +20,23 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tests" / "e2e"))
 
-import httpx  # noqa: E402
+import httpx
+from mock_server import MockState, create_mock_app
 
-from tests.e2e.conftest import CAMPAIGN_FILES, FIXED_ENTITIES, HashEmbedder, _free_port  # noqa: E402
-from mock_server import MockState, create_mock_app  # noqa: E402
-from dmd.config import load_config_dict  # noqa: E402
-from dmd.gateway import Gateway  # noqa: E402
-from dmd.index_store import IndexStore  # noqa: E402
-from dmd.lexicon import build_lexicon  # noqa: E402
-from dmd.orchestrator import JobPool  # noqa: E402
-from dmd.pipeline import SessionEngine  # noqa: E402
-from dmd.server import EventBus, create_app  # noqa: E402
-from dmd.scanner import scan_folder, chunk_docs  # noqa: E402
+from dmd.config import load_config_dict
+from dmd.gateway import Gateway
+from dmd.index_store import IndexStore
+from dmd.lexicon import build_lexicon
+from dmd.orchestrator import JobPool
+from dmd.pipeline import SessionEngine
+from dmd.scanner import chunk_docs, scan_folder
+from dmd.server import EventBus, create_app
+from tests.e2e.conftest import (
+    CAMPAIGN_FILES,
+    FIXED_ENTITIES,
+    HashEmbedder,
+    _free_port,
+)
 
 
 def _wait_http(url: str, timeout_s: float = 15.0) -> None:

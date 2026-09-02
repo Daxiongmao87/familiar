@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
 from .gateway import Gateway
 from .scanner import DocFile
@@ -86,8 +86,7 @@ def _merge(
         if a.lower() not in seen_aliases:
             existing.aliases.append(a)
             seen_aliases.add(a.lower())
-    if weight > existing.weight:
-        existing.weight = weight
+    existing.weight = max(existing.weight, weight)
     seen_sources = set(existing.source_files)
     for sf in source_files:
         if sf not in seen_sources:

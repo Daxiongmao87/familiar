@@ -39,5 +39,5 @@ def test_embedder_lazy_load_failure_raises_runtime_error_mentioning_offline(
     from dmd.embedder import Embedder
 
     e = Embedder("some-model")
-    with pytest.raises(RuntimeError, match="(?i)offline"):
+    with pytest.raises(RuntimeError, match=r"(?i)offline"):
         e.embed(["hello world"])

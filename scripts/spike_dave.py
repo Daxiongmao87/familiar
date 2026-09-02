@@ -87,19 +87,19 @@ def _resolve_settings(
         try:
             guild_id = int(str(raw_gid))
         except (TypeError, ValueError):
-            raise SystemExit(f"--guild-id must be int-coercible, got {raw_gid!r}")
+            raise SystemExit(f"--guild-id must be int-coercible, got {raw_gid!r}") from None
     raw_cid = args.channel_id or os.environ.get("DISCORD_CHANNEL_ID")
     if raw_cid is not None:
         try:
             channel_id = int(str(raw_cid))
         except (TypeError, ValueError):
-            raise SystemExit(f"--channel must be int-coercible, got {raw_cid!r}")
+            raise SystemExit(f"--channel must be int-coercible, got {raw_cid!r}") from None
     raw_did = getattr(args, "dm_user_id", None) or os.environ.get("DISCORD_DM_USER_ID")
     if raw_did is not None:
         try:
             dm_user_id = int(str(raw_did))
         except (TypeError, ValueError):
-            raise SystemExit(f"--dm-user-id must be int-coercible, got {raw_did!r}")
+            raise SystemExit(f"--dm-user-id must be int-coercible, got {raw_did!r}") from None
     self_mute = True if args.self_mute is None else bool(args.self_mute)
     self_deaf = False if args.self_deaf is None else bool(args.self_deaf)
 
@@ -149,8 +149,12 @@ def _resolve_settings(
 
 class _PerUserStats:
     __slots__ = (
-        "packets", "bytes_decoded", "decode_failures", "largest_silence_s",
-        "wave_buf", "last_emit_t",
+        "bytes_decoded",
+        "decode_failures",
+        "largest_silence_s",
+        "last_emit_t",
+        "packets",
+        "wave_buf",
     )
 
     def __init__(self) -> None:
@@ -181,8 +185,7 @@ class _Collector:
         now = chunk.t_mono
         if stats.last_emit_t is not None:
             gap = now - stats.last_emit_t
-            if gap > stats.largest_silence_s:
-                stats.largest_silence_s = gap
+            stats.largest_silence_s = max(stats.largest_silence_s, gap)
         stats.last_emit_t = now
         stats.packets += 1
         stats.bytes_decoded += len(chunk.samples)

@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import difflib
 import re
-from typing import Iterable, Sequence
+from collections.abc import Iterable, Sequence
 
 from .types import Entity, LexiconEntry
-
 
 COMMON_WORDS: frozenset[str] = frozenset({
     "a", "about", "above", "across", "after", "against", "along", "already",
@@ -95,10 +94,7 @@ def _metaphone(word: str) -> str:
         s = s.replace(src, dst)
     out: list[str] = []
     for i, c in enumerate(s):
-        if c in _VOWELS:
-            if i == 0:
-                out.append(c)
-        elif c == "h":
+        if c in _VOWELS or c == "h":
             if i == 0:
                 out.append(c)
         elif c == "y":
@@ -210,7 +206,7 @@ def correct_text(
         best_score = 0.0
         best_canonical = ""
         tok_meta = _metaphone(tok)
-        for key, original, canonical in candidates:
+        for key, _, canonical in candidates:
             if abs(len(tok) - len(key)) > 3:
                 continue
             ratio = difflib.SequenceMatcher(None, tok.lower(), key).ratio()
