@@ -107,6 +107,7 @@ class ToolRegistry:
             except asyncio.TimeoutError:
                 try:
                     proc.kill()
+                    await proc.wait()
                 except ProcessLookupError:
                     pass
                 self.rejected.append((cmd_list, "probe_timeout"))
@@ -191,6 +192,7 @@ class ToolRegistry:
         except asyncio.TimeoutError:
             try:
                 proc.kill()
+                await proc.wait()
             except ProcessLookupError:
                 pass
             return None

@@ -67,6 +67,7 @@
   `tests/e2e/test_agentic_pipeline.py::test_empty_agent_output_produces_no_scene_context`
   pins the defect (red before the fix: an empty scene event is emitted;
   green after: none emitted). Patch (pre-1.0).
+- **Subprocess teardown fix.** `dmd/tools_reg.py`: `register()` and `call()` previously called `proc.kill()` on timeout then returned, leaving the killed child transport unreaped. At teardown the transport's `__del__` ran against a closed loop and raised `RuntimeError: Event loop is closed`. Adding `await proc.wait()` after `proc.kill()` reaps the killed child while the loop is still alive — the standard asyncio close idiom. Patch (pre-1.0).
 - **Browser test environment guard.** `tests/e2e/test_ui_e2e.py` now skips
   the headless-browser test when the host cannot create a named semaphore
   (`/dev/shm` restricted; common in PID-namespace containers) instead of
