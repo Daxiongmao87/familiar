@@ -10,6 +10,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, is_dataclass
 from pathlib import Path

@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for the voice-chat-dm-assistant test suite.
+"""Shared pytest fixtures for the familiar test suite.
 
 Sets up sys.path so the ``dmd`` package is importable during tests.
 """
