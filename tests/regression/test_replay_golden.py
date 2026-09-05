@@ -199,9 +199,14 @@ def _normalize(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for ev in events:
         ev = json.loads(json.dumps(ev))
         if ev.get("type") == "turn_latency":
-            # observability event: wall-clock stamp is noise, durations are
-            # deterministic under the fake gateway
+            # observability event: wall-clock stamp and the per-stage durations
+            # are noise (regex fast-lane detection is sub-millisecond but its
+            # monotonic delta straddles the 0.0/0.1 rounding boundary). The
+            # behavior the golden pins is the event's shape and routing, not
+            # its timing.
             ev["t"] = 0.0
+            ev["detect_ms"] = 0.0
+            ev["lane_ms"] = 0.0
         if ev.get("type") == "card":
             card = ev["card"]
             card["id"] = f"card-{card_n}"

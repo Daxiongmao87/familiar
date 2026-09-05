@@ -119,10 +119,15 @@ async def test_chat_endpoint_request_timeout_shortens_read_window() -> None:
 
 
 async def test_trigger_classifier_call_sends_max_tokens() -> None:
+    """The fast-lane LLM is consulted only when the regex is silent, and that
+    call must still be generation-capped (slot-leak guard)."""
+    from dmd.triggers import LANE_CLASSIFY_MAX_TOKENS
+
     captured: dict[str, Any] = {}
     gw = _gw(_chat_handler(captured))
-    await detect_trigger(gw, "I search the corpse")
-    assert captured["body"]["max_tokens"] == 1024
+    # prose with no search/loot/examine keyword -> regex silent -> LLM consulted
+    await detect_trigger(gw, "the fog rolls in over the harbour")
+    assert captured["body"]["max_tokens"] == LANE_CLASSIFY_MAX_TOKENS
 
 
 async def test_monitor_judge_call_sends_max_tokens() -> None:

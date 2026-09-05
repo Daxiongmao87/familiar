@@ -170,7 +170,9 @@ def test_defaults_stt_pipeline_and_project():
         }
     })
     assert cfg.stt_pipeline.sample_rate == 16000
-    assert cfg.stt_pipeline.silence_ms == 700
+    # VAD endpoint hangover default (tuned low for the 5s voice->transcript
+    # budget; see dmd/config.py SttPipelineConfig).
+    assert cfg.stt_pipeline.silence_ms == 500
     assert cfg.stt_pipeline.min_utterance_ms == 400
     assert cfg.project.name == "Untitled Campaign"
 

@@ -6,9 +6,9 @@
     "user_id": "dm"
   },
   {
-    "detect_ms": 0.1,
+    "detect_ms": 0.0,
     "kind": "loot",
-    "lane_ms": 0.3,
+    "lane_ms": 0.0,
     "t": 0.0,
     "text": "I search the body",
     "tier": "card",

@@ -45,6 +45,15 @@
     are not. Non-release-affecting (pre-1.0; no version tag yet).
 
 ### Changed
+- **VAD endpoint hangover tuned 700→500 ms (Priority-1 latency).** The
+  voice→transcript budget starts at *speech-stop*, so the trailing-silence
+  hangover is spent before STT even begins. `SttPipelineConfig.silence_ms`
+  default drops to 500 ms (the brief's 400–600 ms window); `config.example.yaml`
+  and the live `config.yaml` follow. This is a *value* of an already-configurable
+  knob, not an endpoint swap. Trims 0.2 s off every utterance's endpointing;
+  measured long-utterance voice→transcript 4.64 s (≤5 s). Default-value change
+  pinned in `tests/unit/test_config.py::test_defaults_stt_pipeline_and_project`.
+  Patch (pre-1.0).
 - `dmd/config.py`: `AgentConfig` (tool-call budgets, `card_kinds`, cadence).
 - `dmd/server.py`: builds per-player state + world map for the engine; starts
   and stops the transcript monitor on app start/stop.
@@ -83,6 +92,29 @@
   Verification tooling; non-release-affecting.
 
 ### Fixed
+- **Fast-lane classifier dominated the transcript→answer budget (live defect,
+  Priority-1 measurement, 2026-09-05).** `detect_trigger` asked the fast role
+  (ling-3.0-tiny) for every utterance *before* the regex fallback. That
+  endpoint is reasoning-first: a bare classification request emits ~180 hidden
+  reasoning tokens and takes **17–24 s** (measured: `turn_latency`
+  `detect_ms` = 23854 ms on the live baseline, and a direct timed POST to the
+  fast role reproducing 17.9 s), and it still misfired — an unambiguous "we
+  loot … body" came back `is_trigger: false`. So the voice path produced **no
+  answer at all** for 2 of 3 probe utterances (transcript→answer = `-1`).
+  Precedence is now deterministic-first: the keyword regex short-circuits
+  instantly (no LLM, no network) for the search/loot/examine intents that
+  dominate the fast lane, and the LLM is only a *bounded* tie-breaker for prose
+  the regex can't see — `asyncio.wait_for` over a hard
+  `LANE_CLASSIFY_TIMEOUT_S` (3 s) with `LANE_CLASSIFY_MAX_TOKENS` (96), falling
+  back to the regex verdict on timeout/empty/misparse. Measured on the live
+  service: `detect_ms` 23854 ms → **0.0 ms**; transcript→answer `-1/-1/5.3+` →
+  **9.99 / 7.34 / 4.66 s** (all ≤15 s), and all three probe utterances now fire
+  a grounded card. Tests: `tests/unit/test_triggers.py` (regex short-circuits
+  without touching the LLM; a slow LLM is hard-bounded and falls back; malformed
+  result falls back) and the retargeted
+  `tests/unit/test_gateway_slot_guard.py::test_trigger_classifier_call_sends_max_tokens`;
+  golden replay `detect_ms`/`lane_ms` normalized as wall-clock noise. Patch
+  (pre-1.0).
 - **`/api/init` was dead on arrival (live defect, 2026-09-05).**
   `_make_init_runner` in `dmd/server.py` called
   `dmd.init_pass.run_init(project_path=…, gw=…)` with nonexistent keywords

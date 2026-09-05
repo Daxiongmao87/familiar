@@ -151,7 +151,13 @@ class SttPipelineConfig(BaseModel):
     """STT chunking and VAD timing parameters."""
 
     sample_rate: int = 16000
-    silence_ms: int = 700
+    # Trailing-silence hangover before an utterance is endpointed. The
+    # voice->transcript budget starts at speech-STOP, so every ms of hangover
+    # is spent before STT even begins (a long tail silently eats the whole
+    # 5s). Tuned low per the Priority-1 latency directive (400-600ms window);
+    # 500ms is the midpoint — short enough to protect the budget, long enough
+    # to survive intra-sentence pauses.
+    silence_ms: int = 500
     min_utterance_ms: int = 400
     max_chunk_s: int = 25
 

@@ -49,7 +49,7 @@ orchestration:
 
 stt_pipeline:
   sample_rate: 16000             # transcription target rate
-  silence_ms: 700                # end-of-utterance threshold
+  silence_ms: 500                # end-of-utterance threshold (low to protect the 5s voice->transcript budget)
   min_utterance_ms: 400
   max_chunk_s: 25
 
