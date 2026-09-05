@@ -607,7 +607,16 @@ class SessionEngine:
         if kind == "manual":
             return f"The DM asks directly: {utterance}"
         kind_hint = {
-            "loot": "a LOOT card: what was found, with quantities and values",
+            "loot": (
+                "a SKILL-CHECK/LOOT card: the DM needs to know what a search can "
+                "find and at what DC. For each findable thing, name the skill and "
+                "DC to find/notice it (e.g. Perception DC 12 to spot the hidden "
+                "pouch, Investigation DC 15 to find the secret compartment), the "
+                "quantity, value, and any DC to use it. body_md must be a markdown "
+                "table with columns: Find | Skill / DC | Qty | Value | Notes — and "
+                "the same rows as structured items, each with dc_find set. Never "
+                "return a bare price list; a search always costs a roll."
+            ),
             "rules": "a RULING card: the DC, the skill, and the ruling",
             "lore": "a short, verified lore / scene context note",
         }.get(kind, "a concise, verified answer")
