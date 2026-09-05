@@ -1,9 +1,10 @@
-"""Mandatory-grounding guard for rules/ruling cards.
+"""Mandatory-grounding for rules/ruling cards.
 
-Owner directive 2026-09-05: worker agents must actually SEARCH before
+Owner directive 2026-09-05: worker agents must actually search before
 producing a rules/ruling card (bundled SearXNG). ling-tiny answers from
-memory with zero tool calls; the guard pushes an ungrounded rules card
-back through the loop until it calls web_search (or the budget ends).
+memory and is too slow to survive a push-back round-trip, so rules tasks
+pre-ground deterministically: one web_search fires BEFORE the model's
+first decode and its results are handed to the model as context.
 """
 
 from __future__ import annotations
@@ -12,82 +13,109 @@ from typing import Any
 
 import pytest
 
-from dmd.agent import WorkerAgent
+from dmd.agent import WorkerAgent, _is_rules_task
 from dmd.config import AgentConfig, SearchConfig
 
 
 class _FakeGw:
-    """Gateway stub: first calls answer from memory (no tool), then after the
-    grounding nudge the model calls web_search and returns a grounded card."""
+    """Gateway stub: web_search tool returns grounded results; the model then
+    produces a rules card citing them."""
 
     def __init__(self) -> None:
-        self.calls: list[str] = []  # role labels of each chat call
+        self.web_search_calls = 0
+        self.final_body = ""
 
     async def chat(self, role, messages, **kw) -> Any:
-        self.calls.append(role)
-        # Find the latest user message to decide the behavior.
-        latest = ""
+        user_text = ""
         for m in reversed(messages):
             if m["role"] == "user":
-                latest = m["content"]
+                user_text = m["content"]
                 break
-        if "must be grounded" in latest or "Call web_search now" in latest:
-            # After the nudge, the model performs the tool call.
-            return '{"tool": "web_search", "args": {"query": "5e grappling rules"}}'
-        # Tool result now present -> final grounded card.
-        if "TOOL RESULT" in latest:
+        # After the grounding block is injected, the model writes the card.
+        if "PRE-RETRIEVED WEB RESULTS" in user_text:
+            self.final_body = (
+                "Grapple per SRD (source: https://example.com/grapple) — "
+                "Athletics vs Athletics."
+            )
             return (
                 '{"kind": "rules", "title": "Ruling: Grapple", '
-                '"body_md": "Grapple DC per 5e SRD (source: web search)", '
-                '"items": []}'
+                f'"body_md": "{self.final_body}", "items": []}}'
             )
-        # First attempt: model answers from memory with NO tool call.
+        # Any other (non-rules) task: the model answers from repo context.
         return (
-            '{"kind": "rules", "title": "Ruling: Grapple", '
-            '"body_md": "Athletics vs Athletics", "items": []}'
+            '{"kind": "loot", "title": "Loot", '
+            '"body_md": "A pouch (dc_find 12)", "items": []}'
         )
 
+    async def aclose(self) -> None:  # pragma: no cover
+        pass
 
-def _mk_agent(gw: Any) -> WorkerAgent:
+
+class _RecordingWorker(WorkerAgent):
+    """WorkerAgent with a stubbed web_search that records the call."""
+
+    def __init__(self, gw: Any, agent: Any) -> None:
+        super().__init__(
+            gw=gw,
+            store=None,
+            project_path="sample-campaign",
+            cfg=agent,
+            world_map="sample",
+            embedder=None,
+        )
+        self._recorded = 0
+
+    async def _tool_web_search(self, args: dict) -> Any:
+        self._recorded += 1
+        return {
+            "results": [
+                {
+                    "title": "5e Grapple Rules",
+                    "url": "https://example.com/grapple",
+                    "snippet": "Athletics vs Athletics; speed 0.",
+                }
+            ],
+            "engine": "searxng",
+        }
+
+
+def _mk_agent(gw: Any) -> tuple[_RecordingWorker, AgentConfig]:
     cfg = AgentConfig(search=SearchConfig(endpoint="http://127.0.0.1:8888"))
-    return WorkerAgent(
-        gw=gw,
-        store=None,
-        project_path="sample-campaign",
-        cfg=cfg,
-        world_map="sample",
-        embedder=None,
-    )
+    return _RecordingWorker(gw, cfg), cfg
+
+
+def test_is_rules_task_detects_ruling() -> None:
+    assert _is_rules_task("Produce a RULING card: the DC, the skill")
+    assert _is_rules_task("The DM triggered a rules intent")
+    assert not _is_rules_task("Produce a LOOT card: quantities and values")
+    assert not _is_rules_task("what do we find")
 
 
 @pytest.mark.asyncio
-async def test_rules_card_without_tool_calls_is_pushed_to_search() -> None:
+async def test_rules_task_pre_grounds_with_web_search() -> None:
     gw = _FakeGw()
-    agent = _mk_agent(gw)
+    agent, _ = _mk_agent(gw)
 
-    # Tiny model answers a RULES task from memory first (no tools). The guard
-    # must push it back until it calls web_search, then accept the card.
     res = await agent.run(
         "The DM triggered a rules intent. Produce a RULING card: the DC, the skill, and the ruling.",
         tier="card",
     )
-    assert res.tool_calls == 1, f"expected the grounding web_search, got {res.tool_calls}"
+    # The deterministic pre-grounding fired exactly one web_search.
+    assert agent._recorded == 1
+    # tool_calls counts the grounding call.
+    assert res.tool_calls == 1
     assert res.card is not None
     assert res.card["kind"] == "rules"
-    assert res.card["title"] == "Ruling: Grapple"
-    # The grounded card's body cites the web-search source (not memory).
-    assert "web search" in res.card["body_md"]
+    assert "example.com" in res.card["body_md"]
 
 
 @pytest.mark.asyncio
-async def test_loot_card_without_tool_calls_is_accepted() -> None:
-    """Loot cards are repo-grounded; the mandatory-search guard must not
+async def test_loot_task_does_not_force_web_search() -> None:
+    """Loot cards are repo-grounded; the mandatory-search rule must not
     force a web search on them (owner: loot comes from campaign lore)."""
     gw = _FakeGw()
-    agent = _mk_agent(gw)
+    agent, _ = _mk_agent(gw)
 
     res = await agent.run("loot intent: what is on Brother Ulrich?", tier="card")
-    # First chat in _FakeGw returns a rules-shaped card; acceptable — we only
-    # assert the guard does not infinite-loop and honors the model output.
+    assert agent._recorded == 0
     assert res.card is not None
-    assert res.tool_calls >= 0

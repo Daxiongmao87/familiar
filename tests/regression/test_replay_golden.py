@@ -125,11 +125,17 @@ class FakeGateway:
                 ]
             }
         if "grappl" in user_text.lower():
-            # Mandatory-grounding contract (2026-09-05): a rules card must be
-            # preceded by a web_search tool call. First pass = the tool call;
-            # after the tool result lands, return the grounded card.
-            if "TOOL RESULT" in user_text:
+            # Pre-grounding contract (2026-09-05): for rules tasks the engine
+            # already fired web_search and injected PRE-RETRIEVED WEB RESULTS
+            # before this decode, so the model answers the grounded card
+            # directly rather than issuing another in-loop tool call.
+            if "PRE-RETRIEVED WEB RESULTS" in user_text:
                 return _rules_card_json()
+            if "TOOL RESULT" in user_text:
+                # In-loop search completed (hermetic fallback when the
+                # pre-grounding block was unavailable).
+                return _rules_card_json()
+            # Request the search.
             return '{"tool": "web_search", "args": {"query": "5e grapple rules"}}'
         return _loot_card_json()
 
@@ -163,6 +169,10 @@ async def rig(tmp_path: Path):
                 "stt": {"base_url": "http://fake.invalid/v1"},
                 "embeddings": {"provider": "local", "model_id": "hash8"},
             },
+            # Hermetic: the worker's rules-task pre-grounding must NOT hit a
+            # live SearXNG/DDG during the regression; point it at a dead port
+            # so the in-loop fake tool call is exercised instead.
+            "agent": {"search": {"endpoint": "http://127.0.0.1:9", "timeout_s": 0.2}},
         }
     )
 

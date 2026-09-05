@@ -274,13 +274,36 @@ class WorkerAgent:
             if tier == "card"
             else self.cfg.ephemeral_max_tool_calls
         )
+        # Deterministic pre-grounding for rules/ruling cards (owner directive
+        # 2026-09-05): fire ONE web_search BEFORE the model's first decode and
+        # hand it the results. Guarantees grounding without a second decode —
+        # ling-tiny is too slow to survive a push-back round-trip.
+        grounding_block = ""
+        grounding_calls = 0
+        if tier == "card" and _is_rules_task(task):
+            try:
+                hunt = await self._tool_web_search({"query": task[:240]})
+                results = hunt.get("results") or []
+                if results:
+                    lines = [
+                        f"- {r.get('title','')} | {r.get('url','')}\n  {r.get('snippet','')}"
+                        for r in results[:4]
+                    ]
+                    grounding_block = (
+                        "PRE-RETRIEVED WEB RESULTS (grounding — the rule source):\n"
+                        + "\n".join(lines)
+                        + "\nUse these to produce the ruling card; cite the URL."
+                    )
+                    grounding_calls = 1
+            except Exception:
+                grounding_block = ""
         try:
             return await asyncio.wait_for(
-                self._loop(task, tier, role, trigger_portion, transcript, max_calls, staged_block),
+                self._loop(task, tier, role, trigger_portion, transcript, max_calls, staged_block, grounding_block, grounding_calls),
                 self.cfg.agent_timeout_s,
             )
         except asyncio.TimeoutError:
-            return AgentResult(tier=tier, error="agent budget exhausted (timeout)")
+            return AgentResult(tier=tier, tool_calls=grounding_calls, error="agent budget exhausted (timeout)")
 
     # -- loop --------------------------------------------------------------
     async def _loop(
@@ -292,12 +315,14 @@ class WorkerAgent:
         transcript: str,
         max_calls: int,
         staged_block: str = "",
+        grounding_block: str = "",
+        initial_tool_calls: int = 0,
     ) -> AgentResult:
         messages = [
             {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": self._task_message(task, tier, trigger_portion, transcript, staged_block)},
+            {"role": "user", "content": self._task_message(task, tier, trigger_portion, transcript, staged_block, grounding_block)},
         ]
-        tool_calls = 0
+        tool_calls = initial_tool_calls
         for _i in range(max_calls + 1):
             content = await self.gw.chat(role, messages, json_schema=None, temperature=0.2)
             parsed = _extract_json(content)
@@ -360,27 +385,6 @@ class WorkerAgent:
                                 error="structured card re-ask produced partial card",
                             )
                         continue
-                # Mandatory-grounding guard: a rules/ruling card produced with
-                # zero tool calls is unverified (ling-tiny answers from memory).
-                # Push it back through the loop once so it actually searches.
-                kind = str((parsed or {}).get("kind", ""))
-                if (
-                    kind in ("rules", "ruling")
-                    and tool_calls == 0
-                    and _i < max_calls
-                ):
-                    messages.append({"role": "assistant", "content": _content_str(content)})
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "This RULING card must be grounded. Call web_search "
-                                "now to find the actual rule source, then produce the "
-                                "final CARD JSON citing it."
-                            ),
-                        }
-                    )
-                    continue
                 return AgentResult(
                     tier="card",
                     card=self._normalize_card(parsed or {}),
@@ -414,8 +418,11 @@ class WorkerAgent:
         trigger_portion: str,
         transcript: str,
         staged_block: str = "",
+        grounding_block: str = "",
     ) -> str:
         parts = [f"TASK: {task}", "", f"TIER: {tier}"]
+        if grounding_block:
+            parts += ["", grounding_block]
         if trigger_portion:
             parts += ["", "TRIGGERING TRANSCRIPT (what this answers):", trigger_portion]
         if transcript:
@@ -614,6 +621,17 @@ class WorkerAgent:
 # ---------------------------------------------------------------------------
 # web helpers
 # ---------------------------------------------------------------------------
+
+
+def _is_rules_task(task: str) -> bool:
+    """True when the task asks for a rules/ruling card that must be grounded.
+
+    The pipeline's task text embeds the kind hint (e.g. "a RULING card: the
+    DC, the skill, and the ruling"). Manual queries are grounded when they
+    mention rules/ruling intent.
+    """
+    t = (task or "").upper()
+    return "RULING" in t or "RULES" in t
 
 
 def _items_from_table(md: str) -> list[dict[str, Any]]:
