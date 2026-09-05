@@ -81,3 +81,26 @@
   asserts cards and transcript lines reach the client. Run to confirm the
   live window renders artifacts when a real browser isn't available.
   Verification tooling; non-release-affecting.
+
+### Fixed
+- **LLM inference-slot leak (Priority 0 hotfix; production defect,
+  2026-09-05).** `dmd/gateway.py` omitted `max_tokens` whenever the caller
+  passed `None`, so llama.cpp ran with `n_predict=-1`; a repeating model
+  never released its slot, and every 180 s client read-timeout abandoned one
+  slot hostage (11 leaked in lockstep this morning; all fleet tiny-model
+  slots held). Now every chat request carries a bounded `max_tokens`
+  resolved caller arg > endpoint config (`models.*.max_tokens`) > per-role
+  default (`ROLE_DEFAULT_MAX_TOKENS`: fast 1024, synthesis 4096, vision
+  2048); `dmd/monitor.py` and `dmd/triggers.py` — the two callers that fired
+  without a cap — now pass 1024 explicitly, and `dmd/gateway.py` honors a
+  per-endpoint `request_timeout_s` so an abandoned call cancels as a typed
+  `GatewayError` instead of hanging on the client default. Guarded by
+  `tests/unit/test_gateway_slot_guard.py` (red before, green after: body
+  always contains `max_tokens` for gateway, trigger-classifier, and
+  monitor-judge call sites) plus
+  `tests/unit/test_triggers.py::test_detect_trigger_fast_lane_passes_max_tokens`.
+  Two silent-`None` defects found in the same audit: `Gateway.transcribe`
+  openai-dialect path never returned the transcription (fixed; proven by
+  previously-red `tests/unit/test_gateway.py::test_transcribe_multipart_returns_text_field`)
+  and `Gateway.stt_health` fell through to `None` on 5xx (fixed). Patch
+  (pre-1.0).

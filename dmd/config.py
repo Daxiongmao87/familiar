@@ -47,6 +47,15 @@ class EndpointConfig(BaseModel):
     api_key: str | None = None
     model_id: str | None = None
     extra_body: dict[str, Any] = Field(default_factory=dict)
+    # Upper bound on generated tokens for every chat call on this endpoint.
+    # None falls back to the per-role default in dmd.gateway. A chat request
+    # without max_tokens lets llama.cpp run with n_predict=-1: a repeating
+    # model never releases its inference slot (2026-09-05 slot-leak incident).
+    max_tokens: int | None = None
+    # Read timeout in seconds for chat requests on this endpoint; None keeps
+    # the client default. Short caps make an abandoned call cancel cleanly
+    # instead of holding the connection for the full client timeout.
+    request_timeout_s: float | None = None
 
 
 class SynthesisRole(EndpointConfig):
@@ -69,6 +78,8 @@ class VisionRole(BaseModel):
     api_key: str | None = None
     model_id: str | None = None
     extra_body: dict[str, Any] = Field(default_factory=dict)
+    max_tokens: int | None = None
+    request_timeout_s: float | None = None
 
 
 class SttRole(EndpointConfig):

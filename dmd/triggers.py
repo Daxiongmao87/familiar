@@ -79,6 +79,7 @@ async def detect_trigger(gw: Gateway | None, text: str) -> tuple[bool, str]:
                 messages,
                 json_schema=_TRIGGER_SCHEMA,
                 temperature=0,
+                max_tokens=1024,
             )
             parsed = _parse_classifier_result(result)
             if parsed is not None:

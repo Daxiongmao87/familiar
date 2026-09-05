@@ -2,17 +2,38 @@
 
 One httpx.AsyncClient per Gateway, per-role EndpointConfig resolution,
 zero vendor assumptions beyond the OpenAI REST dialect.
+
+Slot-leak guard (2026-09-05 incident): every chat request MUST carry a
+``max_tokens``. A llama.cpp request without one runs with ``n_predict=-1``;
+when a small model repeats forever the client times out and abandons, but
+the server slot keeps generating — one surrendered slot per timeout cadence.
+``chat()`` therefore always bounds generation (caller arg > endpoint config >
+per-role default), and honors a per-endpoint ``request_timeout_s`` so an
+abandoned call cancels cleanly instead of holding the 180 s client default.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, cast
 
 import httpx
 import numpy as np
 
 from .config import AppConfig, EndpointConfig
+
+logger = logging.getLogger(__name__)
+
+# Per-role generation caps used when neither the caller nor the endpoint
+# config specifies max_tokens. Judge/trigger schemas are small; 1024 is
+# generous for the fast lane. Card/agent prose gets a full card budget.
+ROLE_DEFAULT_MAX_TOKENS: dict[str, int] = {
+    "fast": 1024,
+    "synthesis": 4096,
+    "vision": 2048,
+}
+DEFAULT_MAX_TOKENS = 4096
 
 
 class GatewayError(RuntimeError):
@@ -59,6 +80,15 @@ class Gateway:
             return {"Authorization": f"Bearer {ep.api_key}"}
         return {}
 
+    def _cap_max_tokens(self, role: str, ep: EndpointConfig, max_tokens: int | None) -> int:
+        """Never let a chat request reach the wire without a generation cap."""
+        if max_tokens is not None:
+            return int(max_tokens)
+        ep_cap = getattr(ep, "max_tokens", None)
+        if ep_cap is not None:
+            return int(ep_cap)
+        return ROLE_DEFAULT_MAX_TOKENS.get(role, DEFAULT_MAX_TOKENS)
+
     async def chat(
         self,
         role: str,
@@ -77,8 +107,8 @@ class Gateway:
         body.update(ep.extra_body)
         if temperature is not None:
             body["temperature"] = temperature
-        if max_tokens is not None:
-            body["max_tokens"] = max_tokens
+        # Slot-leak guard: max_tokens is ALWAYS sent (see module docstring).
+        body["max_tokens"] = self._cap_max_tokens(role, ep, max_tokens)
         if json_schema is not None:
             body["response_format"] = {
                 "type": "json_schema",
@@ -89,7 +119,20 @@ class Gateway:
                 },
             }
         url = ep.base_url.rstrip("/") + "/chat/completions"
-        r = await self._client.post(url, json=body, headers=self._auth_headers(ep))
+        req_timeout: Any = None
+        ep_to = getattr(ep, "request_timeout_s", None)
+        if ep_to is not None:
+            req_timeout = httpx.Timeout(
+                connect=5.0, read=float(ep_to), write=180.0, pool=5.0
+            )
+        try:
+            r = await self._client.post(
+                url, json=body, headers=self._auth_headers(ep), timeout=req_timeout
+            )
+        except httpx.TimeoutException as exc:
+            # Abandoning mid-generation must not leave the caller hanging on a
+            # half-read stream; close out as a clean, typed gateway failure.
+            raise GatewayError(f"{role} chat timed out: {type(exc).__name__}") from exc
         if r.status_code != 200:
             raise GatewayError(f"{role} chat http {r.status_code}: {r.text[:200]}")
         data = r.json()
@@ -144,6 +187,8 @@ class Gateway:
         )
         if r.status_code != 200:
             raise GatewayError(f"stt http {r.status_code}: {r.text[:200]}")
+        data = r.json()
+        return (data.get("text") or "").strip()
 
     async def stt_health(self) -> tuple[bool, str]:
         """Probe the configured STT endpoint reachability.
@@ -166,6 +211,7 @@ class Gateway:
             return False, f"{type(exc).__name__}: {exc}"
         if r.status_code < 500:
             return True, f"http {r.status_code}"
+        return False, f"http {r.status_code}"
 
     async def embed(self, texts: list[str]) -> np.ndarray:
         emb = self._cfg.models.embeddings

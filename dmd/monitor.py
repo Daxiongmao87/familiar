@@ -126,6 +126,7 @@ class TranscriptMonitor:
                 [{"role": "system", "content": _MONITOR_SYSTEM}, {"role": "user", "content": user}],
                 json_schema=_MONITOR_SCHEMA,
                 temperature=0,
+                max_tokens=1024,
             )
         except Exception:
             return None

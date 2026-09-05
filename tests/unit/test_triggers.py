@@ -102,9 +102,15 @@ class _FakeGw:
         messages: list[dict],
         json_schema: dict | None = None,
         temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> Any:
         self.calls.append(
-            {"role": role, "messages": messages, "json_schema": json_schema}
+            {
+                "role": role,
+                "messages": messages,
+                "json_schema": json_schema,
+                "max_tokens": max_tokens,
+            }
         )
         if self._chat_raises:
             raise RuntimeError("stub gw.chat failure")
@@ -175,3 +181,16 @@ async def test_detect_trigger_malformed_fast_lane_falls_back_to_rule() -> None:
     is_trigger, kind = await detect_trigger(gw, "I search the body")
     assert is_trigger is True
     assert kind == "loot"
+
+
+# ---------------------------------------------------------------------------
+# Slot-leak guard (2026-09-05 incident): the classifier call must bound
+# generation — a missing max_tokens ran llama.cpp with n_predict=-1.
+# ---------------------------------------------------------------------------
+
+
+async def test_detect_trigger_fast_lane_passes_max_tokens() -> None:
+    gw = _FakeGw(chat_return={"is_trigger": False, "kind": "other"})
+    await detect_trigger(gw, "hello everyone")
+    assert gw.calls, "fast lane was not used"
+    assert gw.calls[0]["max_tokens"] == 1024
