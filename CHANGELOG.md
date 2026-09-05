@@ -182,3 +182,26 @@
   viewable by this agent (no image input) — owner should eyeball them.
   Tests: `tests/unit/test_session_controls.py` (8). Minor (pre-1.0; new
   endpoints/contracts).
+- **Live-path defects from the 2026-09-05 restart verification (3 fixes).**
+  (a) `stt_health.py` unpacked `Gateway.stt_health()`'s coroutine object
+  synchronously: the probe task died at startup and `/api/status` reported
+  STT `healthy: false` against a whisperx answering 200 — the monitor now
+  awaits the coroutine, the probe loop survives failures, first-failure
+  log-backoff no longer subtracts `None` from a float (second latent crash
+  caught by the same tests), and the snapshot reports `None` (unknown) until
+  the first probe instead of false-dead. Regression:
+  `tests/unit/test_stt_health.py` (6), including a contract test against the
+  real `Gateway` + MockTransport.
+  (b) `orchestration.job_timeout_s` default 20.0 < `agent.agent_timeout_s`
+  45.0: the pool silently killed every card-producing agent run on the live
+  tiny endpoint (manual query -> no card, no event). Default raised to 60.0
+  (documented invariant: > agent budget) and `server._make_pool` now wires
+  `on_drop` -> `job_dropped` event so future drops surface instead of
+  hanging the DM. Test: `tests/unit/test_session_controls.py::test_pool_drop_is_published_not_silent`.
+  (c) WhisperX diarize costs ~2 s/utterance on the real endpoint (measured
+  3.6 s with an empty tracker vs the §14 ~2 s ephemeral budget) but is only
+  consumed by the §7a join — the pipeline now requests diarized segments
+  only when the SpeakingTracker actually has speaking windows; with no
+  gateway data the fast path (`transcribe`) runs. Test:
+  `tests/unit/test_pipeline_attribution.py::test_diarize_requested_only_when_tracker_has_windows`.
+  Patch (pre-1.0).

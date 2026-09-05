@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from collections.abc import Awaitable, Callable
@@ -861,11 +862,24 @@ def _make_pool(cfg: Any, bus: EventBus) -> Any:
         async def _on_card(card: Any) -> None:
             await bus.publish({"type": "card", "card": _card_to_dict(card)})
 
+        async def _on_drop(job: Any, reason: str) -> None:
+            # A dropped synthesis job must be visible, not silent (a card that
+            # never arrives is indistinguishable from a hung session to the DM).
+            await bus.publish(
+                {
+                    "type": "job_dropped",
+                    "kind": str(getattr(job, "kind", "")),
+                    "reason": str(reason),
+                    "t": time.time(),
+                }
+            )
+
         return JobPool(
             max_concurrent=max_concurrent,
             job_timeout_s=job_timeout_s,
             stale_after_s=stale_after_s,
             on_card=_on_card,
+            on_drop=_on_drop,
         )
     except Exception:
         return None

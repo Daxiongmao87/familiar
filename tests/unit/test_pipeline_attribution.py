@@ -139,3 +139,28 @@ async def test_empty_segment_text_produces_no_line() -> None:
     utts = await engine.transcribe_pcm(SOURCE_ID, b"\x01\x02" * 100, 10.0, 11.0)
     assert utts == []
     assert events == []
+
+
+async def test_diarize_requested_only_when_tracker_has_windows() -> None:
+    """§14/§7a live finding: pyannote costs ~2 s/utterance on the real
+    endpoint; it must run only when there are speaking windows to join."""
+    segments = [{"speaker": "SPEAKER_00", "start": 0.0, "end": 1.0, "text": "hi"}]
+    events: list[dict] = []
+
+    # Empty tracker -> plain transcribe(), no diarized call.
+    gw = _DiarGw("hi", segments)
+    engine = _engine(gw, SpeakingTracker(), events)
+    assert engine._attribution_active() is False
+    await engine.transcribe_pcm(SOURCE_ID, b"\x01\x02" * 100, 5.0, 6.0)
+    assert len(gw.calls) == 1  # transcribe() only
+
+    # Tracker with speaking history -> diarized path engages.
+    tr = SpeakingTracker()
+    tr.on_speaking("111", True, t=5.0, name="Kael")
+    tr.on_speaking("111", False, t=6.0)
+    gw2 = _DiarGw("hi", segments)
+    engine2 = _engine(gw2, tr, events)
+    assert engine2._attribution_active() is True
+    utts = await engine2.transcribe_pcm(SOURCE_ID, b"\x01\x02" * 100, 5.0, 6.0)
+    assert len(gw2.calls) == 1
+    assert utts[0].user_id == "111"  # attributed, from diarized segments

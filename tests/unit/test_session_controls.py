@@ -252,3 +252,47 @@ def test_status_reports_controls() -> None:
         r = client.get("/api/status")
     body = r.json()
     assert body["controls"]["capture_paused"] is True
+
+
+def test_pool_drop_is_published_not_silent() -> None:
+    """A synthesis job killed by the pool timeout must surface as job_dropped
+    (silent drop = "the DM waits for a card that never comes")."""
+    import asyncio as _a
+
+    from dmd.server import EventBus, _make_pool
+    from dmd.types import Job, Priority
+
+    cfg = load_config_dict(
+        {
+            "project": {"path": "/tmp"},
+            "models": {
+                "synthesis": {"base_url": "http://fake", "model_id": "m"},
+                "stt": {"base_url": "http://fake"},
+            },
+            "orchestration": {"max_concurrent": 1, "job_timeout_s": 0.05},
+        }
+    )
+
+    async def _run() -> dict:
+        bus = EventBus()
+        bus.attach_loop()
+        q = await bus.subscribe()
+        pool = _make_pool(cfg, bus)
+        assert pool is not None
+
+        async def slow() -> Card:
+            import asyncio as a
+
+            await a.sleep(5)
+            raise AssertionError("unreachable")
+
+        job = Job(id="j1", kind="manual_query", prompt_context={}, priority=Priority.MANUAL)
+        result = await pool.submit(job, slow)
+        ev = await _a.wait_for(q.get(), timeout=2)
+        await pool.close()
+        return {"result": result, "event": ev}
+
+    out = _a.run(_run())
+    assert out["result"] is None
+    ev = out["event"]
+    assert ev["type"] == "job_dropped" and ev["reason"] == "timeout" and ev["kind"] == "manual_query"

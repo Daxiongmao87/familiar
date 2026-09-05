@@ -45,7 +45,7 @@ models:
 
 orchestration:
   max_concurrent: 3              # keep <= backend --parallel slots
-  job_timeout_s: 20
+  job_timeout_s: 60.0          # must exceed agent.agent_timeout_s
 
 stt_pipeline:
   sample_rate: 16000             # transcription target rate

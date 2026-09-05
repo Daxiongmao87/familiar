@@ -365,13 +365,37 @@ class SessionEngine:
             )
         return utterances
 
+    def _attribution_active(self) -> bool:
+        """Diarize only when there is something to join the segments against.
+
+        pyannote segments are consumed solely by the §7a join with the
+        SpeakingTracker's windows; running diarization with an empty tracker
+        buys the live path 1-2 s of GPU latency and zero identity (measured
+        on the real whisperx endpoint: 3.6 s vs ~1.5 s per utterance).
+        """
+        tracker = self.speaking_tracker
+        if tracker is None:
+            return False
+        snap = getattr(tracker, "snapshot", None)
+        if not callable(snap):
+            return True
+        try:
+            state = snap()
+        except Exception:
+            return False
+        return bool(state.get("active")) or int(state.get("history_len", 0)) > 0
+
     async def _stt_with_segments(
         self, wav: bytes, prompt: str | None
     ) -> tuple[str, list[dict[str, Any]]]:
         """One STT call: (text, diarized segments); segments empty when the
         gateway or config can't provide them."""
         td = getattr(self.gw, "transcribe_diarized", None)
-        if callable(td) and getattr(self.cfg.models.stt, "diarize", False):
+        if (
+            callable(td)
+            and getattr(self.cfg.models.stt, "diarize", False)
+            and self._attribution_active()
+        ):
             return await td(wav, prompt=prompt)
         raw = await self.gw.transcribe(wav, prompt=prompt)
         return raw, []

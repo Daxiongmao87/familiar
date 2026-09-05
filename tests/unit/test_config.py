@@ -141,8 +141,10 @@ def test_defaults_orchestration_max_concurrent_is_three():
         }
     })
     assert cfg.orchestration.max_concurrent == 3
-    # Other OrchestrationConfig defaults should also be applied
-    assert cfg.orchestration.job_timeout_s == 20.0
+    # Other OrchestrationConfig defaults should also be applied.
+    # job_timeout_s must exceed agent.agent_timeout_s (45.0) or the pool
+    # silently kills every card (2026-09-05 live defect).
+    assert cfg.orchestration.job_timeout_s == 60.0
     assert cfg.orchestration.stale_after_s == 120.0
 
 

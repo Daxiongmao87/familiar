@@ -43,15 +43,24 @@ class SttHealthMonitor:
 
     async def run(self) -> None:
         """Probe immediately, then on cadence until stopped."""
+        import logging
+
         while not self._stop.is_set():
-            await self._probe_once()
+            try:
+                await self._probe_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - the probe loop must never die
+                logging.getLogger(__name__).warning(
+                    "stt-health probe failed", exc_info=True
+                )
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=self._interval)
             except asyncio.TimeoutError:
                 pass
 
     async def _probe_once(self) -> None:
-        healthy, detail = self._probe()
+        healthy, detail = await self._probe()
         prev = self._healthy
         self._healthy = healthy
         self._detail = detail
@@ -62,8 +71,10 @@ class SttHealthMonitor:
         if not healthy:
             # Log the failure once, then back off until _backoff_s elapses so a
             # persistently-dead endpoint doesn't spam the logs every probe.
-            since = time.monotonic() - self._last_log
-            if self._last_log is None or since >= self._backoff:
+            # (Order matters: the first failure has _last_log None.)
+            if self._last_log is None or (
+                time.monotonic() - self._last_log
+            ) >= self._backoff:
                 import logging
 
                 logging.getLogger(__name__).warning(
@@ -71,17 +82,24 @@ class SttHealthMonitor:
                 )
                 self._last_log = time.monotonic()
 
-    def _probe(self) -> tuple[bool, str]:
+    async def _probe(self) -> tuple[bool, str]:
         if self._gw is None:
             return False, "gateway not initialized"
         try:
-            return self._gw.stt_health()
+            # Gateway.stt_health is a coroutine function — it must be awaited
+            # (the sync call unpacked the coroutine object itself and killed
+            # this task at startup: 2026-09-05 live defect).
+            return await self._gw.stt_health()
         except Exception as exc:  # noqa: BLE001 - already reported via status
             return False, f"{type(exc).__name__}: {exc}"
 
     def snapshot(self) -> dict[str, Any]:
-        """Read-only health view exposed by `/api/status`."""
-        return {"healthy": bool(self._healthy), "detail": self._detail}
+        """Read-only health view exposed by `/api/status`.
+
+        ``healthy`` is None until the first probe lands (unknown, not dead),
+        False only on a real probe failure.
+        """
+        return {"healthy": self._healthy, "detail": self._detail}
 
     async def start(self) -> None:
         """Start the background probe loop."""

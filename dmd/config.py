@@ -122,7 +122,11 @@ class OrchestrationConfig(BaseModel):
     """Bounded async job-orchestration tuning."""
 
     max_concurrent: int = 3
-    job_timeout_s: float = 20.0
+    # The pool must not kill a job before the agent loop's own budget can
+    # produce a result: job_timeout_s has to exceed AgentConfig.agent_timeout_s
+    # (20 < 45 silently dropped every card on a slow local endpoint — live
+    # defect, 2026-09-05).
+    job_timeout_s: float = 60.0
     stale_after_s: float = 120.0
 
 
