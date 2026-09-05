@@ -137,7 +137,9 @@ body {
 .grid {
   flex: 1 1 auto;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* Owner spec 2026-09-05: transcript narrow (keeps ~26%), cards get the
+     remaining width and lay out in a fluid column grid. */
+  grid-template-columns: minmax(240px, 26vw) 1fr;
   gap: 1px;
   background: var(--line);
   min-height: 0;
@@ -150,7 +152,17 @@ body {
 }
 
 .transcript { display: flex; flex-direction: column; gap: 6px; }
-.cards { display: flex; flex-direction: column; gap: 10px; }
+
+/* Fluid card grid: as the cards container widens, more columns appear.
+   auto-fill rows are filled row-by-row (block flow), matching the owner's
+   "row then column" requirement. */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 12px;
+  align-content: start;
+  padding: 4px 2px 12px 2px;
+}
 
 .transcript-line {
   display: flex;
@@ -471,7 +483,7 @@ body.ooc .topbar { box-shadow: inset 0 -2px 0 var(--fg-mute); }
   letter-spacing: 0.06em;
   margin-right: 6px;
 }
-.cards { flex: 1 1 auto; }
+.cards { flex: 1 1 auto; min-height: 0; }
 
 /* --- Card lifecycle: expand-on-click, player badges, done (§9) --- */
 .card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; cursor: pointer; }
@@ -515,4 +527,12 @@ body.ooc .topbar { box-shadow: inset 0 -2px 0 var(--fg-mute); }
 
 @media (max-width: 900px) {
   .cards-col { padding: 10px 12px; }
+  /* Narrow screens: cap the transcript rail so cards keep the majority. */
+  .grid { grid-template-columns: minmax(180px, 30vw) 1fr; }
+  .cards { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+}
+
+@media (max-width: 620px) {
+  /* Very narrow: cards stack under the transcript instead of beside it. */
+  .grid { grid-template-columns: 1fr; grid-template-rows: minmax(120px, 30vh) 1fr; }
 }
