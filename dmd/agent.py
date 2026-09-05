@@ -124,7 +124,7 @@ def _extract_hermes_call(t: str) -> dict[str, Any] | None:
     """Parse the Hermes-family XML tool-call format off the wire.
 
     The configured local endpoints (e.g. ling-3.0-tiny) emit
-    ``<tool_call>name<arg_key>k</arg_key><arg_value>v</arg_value>
+    ``HERMES-XML tool-call wire format`` — name + key/value args.
     regardless of the JSON protocol asked for in the prompt. The agent loop
     must read what the endpoint actually speaks (SPEC §12 swappable
     endpoints), or every tool turn looks like unparseable output — the
