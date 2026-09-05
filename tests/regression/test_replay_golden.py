@@ -125,7 +125,12 @@ class FakeGateway:
                 ]
             }
         if "grappl" in user_text.lower():
-            return _rules_card_json()
+            # Mandatory-grounding contract (2026-09-05): a rules card must be
+            # preceded by a web_search tool call. First pass = the tool call;
+            # after the tool result lands, return the grounded card.
+            if "TOOL RESULT" in user_text:
+                return _rules_card_json()
+            return '{"tool": "web_search", "args": {"query": "5e grapple rules"}}'
         return _loot_card_json()
 
     async def transcribe(self, audio_bytes: bytes, **kw: Any) -> str:

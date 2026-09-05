@@ -52,7 +52,7 @@
         "items": [],
         "sources": [],
         "tier": "card",
-        "tool_calls": 0
+        "tool_calls": 1
       },
       "player_ids": [],
       "status": "active",

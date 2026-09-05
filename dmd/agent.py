@@ -220,6 +220,10 @@ Rules:
 - Base your output ONLY on the World Map, the transcript, and tool results.
 - Verify your output against the triggering transcript before answering.
 - If a fact cannot be verified, mark it "unverified" in the output; never invent it.
+- MANDATORY GROUNDING: if the TASK asks for a RULING or RULES card, you MUST
+  call web_search (or retrieve) at least once BEFORE the final card. A ruling
+  produced from memory alone is not verified — the DM needs the actual rule
+  source. State the source (URL or campaign file) in body_md when you can.
 - Respond with JSON only — no prose outside the JSON object."""
 
 
@@ -356,6 +360,27 @@ class WorkerAgent:
                                 error="structured card re-ask produced partial card",
                             )
                         continue
+                # Mandatory-grounding guard: a rules/ruling card produced with
+                # zero tool calls is unverified (ling-tiny answers from memory).
+                # Push it back through the loop once so it actually searches.
+                kind = str((parsed or {}).get("kind", ""))
+                if (
+                    kind in ("rules", "ruling")
+                    and tool_calls == 0
+                    and _i < max_calls
+                ):
+                    messages.append({"role": "assistant", "content": _content_str(content)})
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "This RULING card must be grounded. Call web_search "
+                                "now to find the actual rule source, then produce the "
+                                "final CARD JSON citing it."
+                            ),
+                        }
+                    )
+                    continue
                 return AgentResult(
                     tier="card",
                     card=self._normalize_card(parsed or {}),
