@@ -201,6 +201,9 @@ class SessionEngine:
         self._active_cards: dict[
             str, Card
         ] = {}  # card_id -> Card (mark-done bookkeeping)
+        # card_id -> wall-clock time when a monitor card_done verdict was first
+        # seen for it. mark_done is withheld until resolve_grace_s passes.
+        self._pending_resolve: dict[str, float] = {}
         self._scene_buffer: deque[dict] = deque(
             maxlen=12
         )  # recent scene notes (for the monitor)
@@ -610,8 +613,8 @@ class SessionEngine:
             "loot": (
                 "a SKILL-CHECK/LOOT card: the DM needs to know what a search can "
                 "find and at what DC. For each findable thing, name the skill and "
-                "DC to find/notice it (e.g. Perception DC 12 to spot the hidden "
-                "pouch, Investigation DC 15 to find the secret compartment), the "
+                "DC to find/notice it (e.g. Perception <DC> to spot the hidden "
+                "pouch, Investigation <DC> to find the secret compartment), the "
                 "quantity, value, and any DC to use it. body_md must be a markdown "
                 "table with columns: Find | Skill / DC | Qty | Value | Notes — and "
                 "the same rows as structured items, each with dc_find set. Never "
@@ -738,6 +741,7 @@ class SessionEngine:
             self.cfg.agent,
             get_transcript=_monitor_transcript,
             get_scene=self._scene_text,
+            get_cards=lambda: [c.__dict__ for c in self.active_cards()],
             on_action=self._on_monitor_action,
             on_predict=self._on_predict,
         )
@@ -815,8 +819,24 @@ class SessionEngine:
         action = verdict.get("action")
         if action == "card_done":
             cid = verdict.get("card_id", "")
-            if cid:
-                await self.mark_card_done(cid)
+            if cid and self._active_cards.get(cid) is not None:
+                grace = float(
+                    getattr(self.cfg.agent, "resolve_grace_s", 0.0) or 0.0
+                )
+                now = time.time()
+                first = self._pending_resolve.get(cid)
+                if first is None:
+                    # First sighting: record it, withhold the mark.
+                    self._pending_resolve[cid] = now
+                    logger.info("card_done verdict for %s (grace %.0fs)", cid, grace)
+                elif now - first >= grace:
+                    # Verdict persisted across the grace window: resolve now.
+                    self._pending_resolve.pop(cid, None)
+                    await self.mark_card_done(cid)
+                # else: still inside the grace window — keep withholding.
+            elif cid and cid in self._pending_resolve:
+                # Card vanished or was already resolved while pending.
+                self._pending_resolve.pop(cid, None)
             return
         if action == "surface":
             tier = verdict.get("tier", "ephemeral")

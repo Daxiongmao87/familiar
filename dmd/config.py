@@ -139,6 +139,11 @@ class AgentConfig(BaseModel):
     web_timeout_s: float = 8.0  # per web_search/web_fetch call
     monitor_cadence_s: float = 30.0  # transcript monitor poll interval
     monitor_lookback: int = 20  # recent utterances the monitor reasons over
+    # Seconds a card_done verdict must survive before the card is actually
+    # marked done. A single monitor tick can misfire on a still-ongoing beat;
+    # requiring the verdict to repeat (or persist) across a grace window keeps
+    # auto-resolve from closing cards early.
+    resolve_grace_s: float = 20.0
     card_kinds: list[str] = [
         "loot",
         "rules",

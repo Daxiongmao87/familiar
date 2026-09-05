@@ -135,14 +135,27 @@ async def test_mark_card_done_records_state(tmp_path: Path) -> None:
 
 async def test_monitor_card_done_updates_state(tmp_path: Path) -> None:
     """The transcript monitor auto-marking a card done (AI observed the
-    resolution in play) must update the store exactly like the UI button."""
+    resolution in play) must update the store exactly like the UI button —
+    after the resolve-grace window confirms the verdict (owner-verified
+    defect 2026-09-05: card_done fired instantly on fabricated ids or
+    never; now verdicts must name a real card and persist past grace)."""
     ps = PlayerState(str(tmp_path / "players.db"))
     ps.seed([{"id": "mira", "name": "Mira", "sheet": ""}])
     events: list[dict] = []
     engine = _engine(tmp_path, ps, events)
     card = _card(pid="mira", items=["potion"])
     engine._active_cards[card.id] = card
+    grace = float(engine.cfg.agent.resolve_grace_s)
 
+    # First sighting: withheld (card stays active, no state write yet).
+    await engine._on_monitor_action({"action": "card_done", "card_id": card.id})
+    assert card.status == "active"
+    row = ps.get("mira")
+    assert row is not None and row["done_cards"] == []
+
+    # Fast-forward past the grace window; a persisted verdict now resolves.
+    pending = engine._pending_resolve[card.id]
+    engine._pending_resolve[card.id] = pending - grace - 1.0
     await engine._on_monitor_action({"action": "card_done", "card_id": card.id})
 
     row = ps.get("mira")

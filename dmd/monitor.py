@@ -24,7 +24,10 @@ _MONITOR_SYSTEM = (
     "Options:\n"
     "- action='surface', tier='ephemeral', text='<short 1-2 sentence scene note>' for a proactive 'you might want to know' note.\n"
     "- action='surface', tier='card', reason='<what to look up and produce as a card>' for a durable artifact worth a card.\n"
-    "- action='card_done', card_id='<id>' when the transcript clearly shows a card's content is resolved.\n"
+    "- action='card_done', card_id='<id>' when the transcript clearly shows one of the ACTIVE CARDS "
+    "(listed below) is resolved — its content was claimed, answered, or otherwise dealt with in "
+    "the conversation. Only ever return a card_id that exists in ACTIVE CARDS; the DM takes one "
+    "extra step per stale card.\n"
     "- action='none' when nothing needs attention.\n"
     "Default to action='none' unless something is clearly actionable. Do not invent "
     "events that are not in the transcript.\n"
@@ -106,6 +109,7 @@ class TranscriptMonitor:
         on_action: Callable[[dict[str, Any]], Awaitable[None]],
         cadence_s: float | None = None,
         on_predict: Callable[[list[str]], Awaitable[None]] | None = None,
+        get_cards: Callable[[], list[dict[str, Any]]] | None = None,
     ) -> None:
         self.gw = gw
         self.cfg = cfg
@@ -113,6 +117,7 @@ class TranscriptMonitor:
         self.get_scene = get_scene
         self.on_action = on_action
         self.on_predict = on_predict
+        self.get_cards = get_cards
         self.cadence = cadence_s if cadence_s is not None else getattr(cfg, "monitor_cadence_s", 30.0)
         self._task: asyncio.Task | None = None
         self._stopping = False
@@ -173,9 +178,22 @@ class TranscriptMonitor:
             await self.on_action(verdict)
 
     async def _judge(self, transcript: str, scene: str) -> dict[str, Any] | None:
+        cards_block = ""
+        if self.get_cards is not None:
+            try:
+                cards = self.get_cards()
+            except Exception:
+                cards = []
+            if cards:
+                lines = [
+                    f"- id={c.get('id')} kind={c.get('kind')} title={c.get('title')!r} items={c.get('items', [])}"
+                    for c in cards
+                ]
+                cards_block = "\nACTIVE CARDS (id, kind, title, items):\n" + "\n".join(lines[:15])
         user = (
             f"RECENT TRANSCRIPT:\n{transcript[-4000:]}\n\n"
             f"CURRENT SCENE CONTEXT:\n{scene[-1500:] or '(none)'}"
+            f"{cards_block}"
         )
         try:
             result = await self.gw.chat(
