@@ -97,7 +97,49 @@ def _extract_json(text) -> dict[str, Any] | None:
                     except (json.JSONDecodeError, ValueError):
                         break
         start = t.find("{", start + 1)
-    return None
+    hermes = _extract_hermes_call(t)
+    return hermes
+
+
+_XML_CALL_RE = re.compile(
+    r"<tool_call>\s*([A-Za-z_][\w.-]*)\s*(.*?)\s*</tool_call>", re.DOTALL
+)
+_XML_ARGS_RE = re.compile(
+    r"<arg_key>\s*(.*?)\s*</arg_key>\s*<arg_value>\s*(.*?)\s*</arg_value>", re.DOTALL
+)
+
+
+def _extract_hermes_call(t: str) -> dict[str, Any] | None:
+    """Parse the Hermes-family XML tool-call format off the wire.
+
+    The configured local endpoints (e.g. ling-3.0-tiny) emit
+    ``<tool_call>name<arg_key>k</arg_key><arg_value>v</arg_value>
+    regardless of the JSON protocol asked for in the prompt. The agent loop
+    must read what the endpoint actually speaks (SPEC §12 swappable
+    endpoints), or every tool turn looks like unparseable output — the
+    2026-09-05 live defect where cards died as "agent budget exhausted"
+    with 0 tool calls.
+    """
+    m = _XML_CALL_RE.search(t)
+    if m is None:
+        return None
+    name = m.group(1)
+    args: dict[str, Any] = {}
+    for k, v in _XML_ARGS_RE.findall(m.group(2)):
+        try:
+            args[k] = json.loads(v)
+        except (json.JSONDecodeError, ValueError):
+            args[k] = v
+    if not args:
+        raw = m.group(2).strip()
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    args = parsed
+            except (json.JSONDecodeError, ValueError):
+                pass
+    return {"tool": name, "args": args}
 
 
 def _content_str(content: Any) -> str:
