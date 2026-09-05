@@ -74,7 +74,9 @@ class PlayerState:
                         pid,
                         p.get("name", pid),
                         p.get("sheet", ""),
-                        p.get("hp", ""),
+                        # Empty hp must arrive as NULL, or COALESCE overwrites
+                        # live hp state on every re-seed (re-seed bug, §11).
+                        p.get("hp") or None,
                         _dump(p.get("inventory", [])),
                         _dump(p.get("knowledge", [])),
                         _dump([]),
@@ -127,7 +129,12 @@ class PlayerState:
             self._conn.commit()
 
     def record_card_done(self, player_id: str, card: dict[str, Any]) -> None:
-        """Append a resolved card to the player's knowledge (mark-done bookkeeping)."""
+        """Append a resolved card to the player's bookkeeping (mark-done).
+
+        The card reference lands in ``done_cards``; any items the card carried
+        (loot observed as resolved in play) are merged into ``inventory``.
+        Append-only and idempotent by card id — it never deletes state.
+        """
         with self._lock:
             row = self._conn.execute(
                 "SELECT player_id, done_cards, inventory FROM players WHERE player_id = ?",
@@ -144,7 +151,7 @@ class PlayerState:
                         card.get("player_id", player_id),
                         "",
                         "",
-                        _dump([]),
+                        _dump(self._merge_items([], card.get("items", []))),
                         _dump([]),
                         _dump([self._card_ref(card)]),
                         time.time(),
@@ -154,11 +161,26 @@ class PlayerState:
                 done = _load(row[1], [])
                 if not any(d.get("id") == card.get("id") for d in done):
                     done.append(self._card_ref(card))
+                    inventory = self._merge_items(_load(row[2], []), card.get("items", []))
+                else:
+                    inventory = _load(row[2], [])
                 self._conn.execute(
-                    "UPDATE players SET done_cards = ?, updated_at = ? WHERE player_id = ?",
-                    (_dump(done), time.time(), player_id),
+                    "UPDATE players SET done_cards = ?, inventory = ?, updated_at = ? WHERE player_id = ?",
+                    (_dump(done), _dump(inventory), time.time(), player_id),
                 )
             self._conn.commit()
+
+    @staticmethod
+    def _merge_items(inventory: list[Any], items: Any) -> list[Any]:
+        """Union new item strings into the inventory, preserving order."""
+        out = list(inventory)
+        seen = {str(i) for i in out}
+        for item in items or []:
+            key = str(item)
+            if key and key not in seen:
+                out.append(item)
+                seen.add(key)
+        return out
 
     @staticmethod
     def _card_ref(card: dict[str, Any]) -> dict[str, Any]:

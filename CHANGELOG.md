@@ -125,3 +125,34 @@
   `tests/unit/test_gateway.py::test_whisperx_params_reflect_config_diarize_align`,
   `::test_transcribe_diarized_returns_speaker_segments`,
   `::test_stt_health_5xx_reports_unreachable`. Patch (pre-1.0).
+- **§7a per-speaker attribution (ABSENT defect closed).** New
+  `dmd/attribution.py` implements the owner-ordered join: pyannote diarized
+  segment windows (WhisperX `diarize=true`, clip-relative seconds mapped
+  through the utterance's monotonic start) x Discord-gateway
+  `member_speaking_state_update` windows (`SpeakingTracker`), best-overlap
+  wins, 0.15 s minimum, crosstalk grouped into one utterance per speaker
+  (`group_by_speaker`), dominant-window fallback without segments
+  (`attribute_whole`). Attribution can only refine identity, never invent it
+  (no overlap -> source label). `dmd/types.py`: `Utterance` gains `name`;
+  `dmd/pipeline.py`: `transcribe_pcm` returns attributed utterances and the
+  `transcript` event carries `user_id` + display `name` (browser_mixed is no
+  longer the label on live capture); `SessionEngine` accepts
+  `speaking_tracker`. `dmd/speaking_tracker.py`: `overlaps_during`,
+  display-name registry; `dmd/voice_presence.py` feeds names;
+  `dmd/server.py:main` creates the tracker and injects it into the engine.
+  §4 per-user identity rides this mechanism (DAVE per-user RTP stays deferred
+  by design, §17). Proven by `tests/unit/test_attribution.py` (7) and
+  `tests/unit/test_pipeline_attribution.py` (5: named segments, crosstalk,
+  dominant fallback, tracker-absent identity passthrough for replay sources).
+  Minor (pre-1.0).
+- **§11 player-state proof + re-seed HP bug fix.**
+  `tests/unit/test_player_state.py` (6) pins seeding from `characters/*.md`
+  (frontmatter titles), mark-done and monitor-AI-observed updates writing
+  through `record_card_done` (done_cards ref + idempotent, item merge into
+  inventory). The tests caught a real defect: `seed()` wrote empty hp into
+  `COALESCE(excluded.hp, players.hp)`, clobbering live HP on every re-seed —
+  now empty hp arrives as NULL. Patch (pre-1.0).
+- **§5 no-baked-rules audit pinned.** `tests/unit/test_no_baked_rules.py`
+  statically guards shipped `dmd/` + `web/` sources against dice notation,
+  DC/AC constants, and rule-table fragments (the grep audit passed clean;
+  the test keeps it clean). Test hardening; non-release-affecting.
