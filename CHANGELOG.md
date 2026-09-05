@@ -104,3 +104,14 @@
   previously-red `tests/unit/test_gateway.py::test_transcribe_multipart_returns_text_field`)
   and `Gateway.stt_health` fell through to `None` on 5xx (fixed). Patch
   (pre-1.0).
+- **Intake latency instrumentation (SPEC §14, owner-verified defect).** The
+  per-user STT worker queue (from the v2 wip lane) now carries timestamps
+  proving the original defect is gone: every utterance logs enqueue /
+  worker-start / STT-done monotonic timestamps and publishes an
+  `stt_latency` event (`queue_wait_ms`, `stt_ms`, `post_speech_ms`);
+  `consume_source` measures per-chunk handler work and warns if a chunk
+  ever takes >50 ms in the feed loop (the inline-await signature).
+  `SessionEngine.intake_stats()` exposes the counters. Proven by
+  `tests/unit/test_pipeline_latency.py` (4 tests: feed span with 0.4 s STT
+  calls, cross-speaker independence — fast B finishes before slow A —
+  per-user ordering, pool drain). Patch (pre-1.0).

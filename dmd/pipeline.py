@@ -6,6 +6,7 @@ synthesis-job submission, and source consumption.
 from __future__ import annotations
 
 import asyncio
+import logging
 import struct
 import time
 import uuid
@@ -23,6 +24,12 @@ from .sources.base import AudioSource
 from .triggers import detect_trigger
 from .types import Card, Job, LexiconEntry, Priority, Utterance
 from .vad import UtteranceSegmenter
+
+logger = logging.getLogger(__name__)
+
+# Intake chunk-handler work above this many ms means something awaits in the
+# feed loop — the exact SPEC §14 defect (inline STT stall) we must never ship.
+_INTAKE_BLOCK_WARN_MS = 50.0
 
 
 def _wav_bytes(pcm: bytes, sample_rate: int = 16000) -> bytes:
@@ -94,10 +101,14 @@ class _PerUserSttQueue:
     latency (a slow endpoint no longer stalls the VAD) while preserving
     per-user ordering, so one user's slow transcription never delays the feed
     or another user's utterances.
+
+    Every item carries its enqueue timestamp so the dispatch path can log
+    queue-wait and STT latency against the SPEC §14 budget (ephemeral ≤ ~2 s).
     """
 
     def __init__(
-        self, dispatch: Callable[[str, bytes, Utterance], Awaitable[None]]
+        self,
+        dispatch: Callable[[str, bytes, Utterance, float], Awaitable[None]],
     ) -> None:
         self._dispatch = dispatch
         self._queues: dict[str, asyncio.Queue] = {}
@@ -108,18 +119,19 @@ class _PerUserSttQueue:
         """Schedule ``u`` for transcription on that user's worker (non-blocking)."""
         if self._closed:
             return
+        t_enqueued = time.monotonic()
         q = self._queues.get(user_id)
         if q is None:
             q = asyncio.Queue()
             self._queues[user_id] = q
             self._tasks[user_id] = asyncio.create_task(self._run(user_id, q))
-        q.put_nowait((audio, u))
+        q.put_nowait((audio, u, t_enqueued))
 
     async def _run(self, user_id: str, q: asyncio.Queue) -> None:
         while True:
-            audio, u = await q.get()
+            audio, u, t_enqueued = await q.get()
             try:
-                await self._dispatch(user_id, audio, u)
+                await self._dispatch(user_id, audio, u, t_enqueued)
             except Exception:
                 pass
             finally:
@@ -199,6 +211,11 @@ class SessionEngine:
         )
         self._monitor: TranscriptMonitor | None = None
         self._stt_queue = _PerUserSttQueue(self._dispatch_utterance)
+        self._intake_stats: dict[str, float] = {}
+
+    def intake_stats(self) -> dict[str, float]:
+        """Latency counters from the last consume_source run (§14 proof)."""
+        return dict(self._intake_stats)
 
     @property
     def recent_utterances(self) -> list[Utterance]:
@@ -208,8 +225,18 @@ class SessionEngine:
         self._recent.append(u)
 
     async def _dispatch_utterance(
-        self, user_id: str, audio: bytes, u: Utterance
+        self, user_id: str, audio: bytes, u: Utterance, t_enqueued: float
     ) -> None:
+        """Worker-side STT for one queued utterance (runs off the intake loop).
+
+        Timestamps every stage against the §14 budget: enqueue -> worker start
+        (queue wait), STT duration, and total post-speech latency to the
+        published transcript. Logged per utterance and published as an
+        ``stt_latency`` event so the live UI and the session log can both
+        measure intake non-blocking and the ephemeral ≤ ~2 s target.
+        """
+        t_worker_start = time.monotonic()
+        queue_wait_ms = (t_worker_start - t_enqueued) * 1000.0
         try:
             produced = await self.transcribe_pcm(user_id, audio, u.t_start, u.t_end)
         except Exception as exc:
@@ -222,6 +249,30 @@ class SessionEngine:
                 }
             )
             return
+        t_done = time.monotonic()
+        stt_ms = (t_done - t_worker_start) * 1000.0
+        post_speech_ms = (t_done - u.t_end) * 1000.0
+        logger.info(
+            "stt-latency user=%s enqueued=%.3f worker_start=%.3f done=%.3f "
+            "queue_wait_ms=%.1f stt_ms=%.1f post_speech_ms=%.1f",
+            user_id,
+            t_enqueued,
+            t_worker_start,
+            t_done,
+            queue_wait_ms,
+            stt_ms,
+            post_speech_ms,
+        )
+        self.on_event(
+            {
+                "type": "stt_latency",
+                "user_id": user_id,
+                "queue_wait_ms": round(queue_wait_ms, 1),
+                "stt_ms": round(stt_ms, 1),
+                "post_speech_ms": round(post_speech_ms, 1),
+                "t": t_done,
+            }
+        )
         if produced is not None:
             await self.handle_utterance(produced)
 
@@ -471,10 +522,16 @@ class SessionEngine:
                 self._emit_scene(verdict.get("text", ""), "monitor")
 
     async def consume_source(self, source: AudioSource) -> None:
-        """Stream an AudioSource through the VAD, transcribing each utterance.
+        """Stream an AudioSource through the VAD, enqueuing each utterance for STT.
 
         Audio is assumed to arrive as 16 kHz mono int16 PCM (PcmChunk.sample_rate
         must match cfg.stt_pipeline.sample_rate; no resampling is performed).
+
+        The chunk loop does only VAD feeding and a non-blocking enqueue; STT,
+        trigger classification, and agent work all run on the per-user worker
+        queue. Intake handler time per chunk is measured and logged so a
+        regression to inline awaits (SPEC §14 defect, 2026-09-05 audit) shows
+        up immediately in the session log and ``intake_stats()``.
         """
         sp = self.cfg.stt_pipeline
         segmenter = UtteranceSegmenter(
@@ -484,9 +541,14 @@ class SessionEngine:
         )
         buffers: dict[str, bytearray] = {}
         offsets: dict[str, int] = {}
+        intake_chunks = 0
+        intake_work_max_ms = 0.0
+        intake_work_total_ms = 0.0
+        intake_t0 = time.monotonic()
 
         try:
             async for chunk in source:
+                t_work0 = time.monotonic()
                 user_id = chunk.user_id
                 buf = buffers.setdefault(user_id, bytearray())
                 offsets.setdefault(user_id, 0)
@@ -500,6 +562,17 @@ class SessionEngine:
                     if not audio:
                         continue
                     self._stt_queue.enqueue(user_id, audio, u)
+                work_ms = (time.monotonic() - t_work0) * 1000.0
+                intake_chunks += 1
+                intake_work_total_ms += work_ms
+                if work_ms > intake_work_max_ms:
+                    intake_work_max_ms = work_ms
+                if work_ms > _INTAKE_BLOCK_WARN_MS:
+                    logger.warning(
+                        "intake stalled: chunk handler took %.1f ms "
+                        "(STT must run on the worker queue, not inline)",
+                        work_ms,
+                    )
         finally:
             for user_id, buf in buffers.items():
                 cur_len = len(buf)
@@ -512,6 +585,21 @@ class SessionEngine:
                     continue
                 u = flush_utts[0]
                 self._stt_queue.enqueue(user_id, tail, u)
+            self._intake_stats = {
+                "chunks": intake_chunks,
+                "max_work_ms": round(intake_work_max_ms, 3),
+                "total_work_ms": round(intake_work_total_ms, 3),
+                "wall_ms": round((time.monotonic() - intake_t0) * 1000.0, 3),
+            }
+            logger.info(
+                "intake-stats chunks=%d max_work_ms=%.3f total_work_ms=%.3f "
+                "wall_ms=%.3f (intake blocks on no await; STT ran on the "
+                "per-user worker queue)",
+                intake_chunks,
+                intake_work_max_ms,
+                intake_work_total_ms,
+                self._intake_stats["wall_ms"],
+            )
             await self._stt_queue.drain()
             drain = getattr(self.pool, "drain", None)
             if drain is not None:
