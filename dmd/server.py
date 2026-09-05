@@ -54,7 +54,9 @@ class EventBus:
             self._preloop.append(event)
             return
         try:
-            loop.call_soon_threadsafe(lambda: asyncio.ensure_future(self.publish(event)))
+            loop.call_soon_threadsafe(
+                lambda: asyncio.ensure_future(self.publish(event))
+            )
         except RuntimeError:
             self._preloop.append(event)
 
@@ -151,7 +153,9 @@ def create_app(
     bus = bus or EventBus()
     provider = status_provider or _default_status_provider
     web_path = (
-        Path(web_dir) if web_dir is not None else Path(__file__).resolve().parent.parent / "web"
+        Path(web_dir)
+        if web_dir is not None
+        else Path(__file__).resolve().parent.parent / "web"
     )
     if not web_path.exists():
         web_path.mkdir(parents=True, exist_ok=True)
@@ -172,8 +176,14 @@ def create_app(
             discord_cfg = getattr(cfg, "discord", None)
             token = getattr(discord_cfg, "token", None) if discord_cfg else None
             guild_id = getattr(discord_cfg, "guild_id", None) if discord_cfg else None
-            dm_user_id = getattr(discord_cfg, "dm_user_id", None) if discord_cfg else None
-            if isinstance(token, str) and token.startswith("${") and token.endswith("}"):
+            dm_user_id = (
+                getattr(discord_cfg, "dm_user_id", None) if discord_cfg else None
+            )
+            if (
+                isinstance(token, str)
+                and token.startswith("${")
+                and token.endswith("}")
+            ):
                 import os
 
                 token = os.environ.get(token[2:-1])
@@ -183,7 +193,9 @@ def create_app(
 
                 tracker = SpeakingTracker()
                 app.state.speaking_tracker = tracker
-                presence = VoicePresence(str(token), int(guild_id), int(dm_user_id), tracker)
+                presence = VoicePresence(
+                    str(token), int(guild_id), int(dm_user_id), tracker
+                )
                 app.state.voice_presence = presence
 
                 @app.on_event("startup")
@@ -192,7 +204,7 @@ def create_app(
 
                 @app.on_event("shutdown")
                 async def _stop_voice_presence() -> None:
-                    await presence.stop()
+                    await presence.stop(getattr(cfg, "shutdown_timeout_s", 10.0))
         except Exception as exc:
             import logging
 
@@ -306,7 +318,11 @@ def create_app(
                     params={"limit": "1000"},
                 )
                 if resp.status_code != 200:
-                    return {"ok": False, "detail": f"discord {resp.status_code}", "members": []}
+                    return {
+                        "ok": False,
+                        "detail": f"discord {resp.status_code}",
+                        "members": [],
+                    }
                 raw = resp.json()
                 members = []
                 for m in raw if isinstance(raw, list) else []:
@@ -353,7 +369,9 @@ def create_app(
                 # treat as username — try to resolve via guild members
                 discord_cfg = getattr(cfg, "discord", None)
                 token = getattr(discord_cfg, "token", None) if discord_cfg else None
-                guild_id = getattr(discord_cfg, "guild_id", None) if discord_cfg else None
+                guild_id = (
+                    getattr(discord_cfg, "guild_id", None) if discord_cfg else None
+                )
                 if token and guild_id:
                     try:
                         import httpx
@@ -368,8 +386,10 @@ def create_app(
                                 for m in resp.json():
                                     user = m.get("user") or {}
                                     if (
-                                        str(user.get("username", "")).lower() == dm_id.lower()
-                                        or str(m.get("nick") or "").lower() == dm_id.lower()
+                                        str(user.get("username", "")).lower()
+                                        == dm_id.lower()
+                                        or str(m.get("nick") or "").lower()
+                                        == dm_id.lower()
                                     ):
                                         dm_id = str(user.get("id"))
                                         break
@@ -418,7 +438,11 @@ def create_app(
                 if not isinstance(cur, dict):
                     cur = None
                     break
-            if isinstance(cur, dict) and isinstance(cur.get(parts[-1]), str) and cur.get(parts[-1]):
+            if (
+                isinstance(cur, dict)
+                and isinstance(cur.get(parts[-1]), str)
+                and cur.get(parts[-1])
+            ):
                 cur[parts[-1]] = "__MASKED__"
         return out
 
@@ -549,11 +573,11 @@ def _build_status_provider(
     cfg: Any,
     store: Any,
     gateway: Any,
+    stt_monitor: Any = None,
 ) -> Callable[[], dict[str, Any]]:
+
     def _snapshot() -> dict[str, Any]:
-        project = ""
-        if cfg is not None:
-            project = str(getattr(getattr(cfg, "project", None), "name", "") or "")
+        project = str(getattr(getattr(cfg, "project", None), "name", "") or "")
         indexed_docs = 0
         entities = 0
         tools = 0
@@ -579,8 +603,11 @@ def _build_status_provider(
             "project": project,
             "indexed_docs": indexed_docs,
             "entities": entities,
-            "tools": tools,
-            "roles": roles,
+            "stt_health": (
+                stt_monitor.snapshot()
+                if stt_monitor is not None
+                else {"healthy": None, "detail": ""}
+            ),
         }
 
     return _snapshot
@@ -638,7 +665,9 @@ def _seed_players(player_state: Any, project_path: str) -> None:
         except Exception:
             pass
         try:
-            player_state.seed([{"id": pid, "name": name, "sheet": f"characters/{f.name}"}])
+            player_state.seed(
+                [{"id": pid, "name": name, "sheet": f"characters/{f.name}"}]
+            )
         except Exception:
             pass
 
@@ -684,7 +713,9 @@ def _make_engine(
 
             players = player_state.all_players() if player_state is not None else None
             tool_names = []
-            world_map = build_world_map(project_path, store, players=players, tools=tool_names)
+            world_map = build_world_map(
+                project_path, store, players=players, tools=tool_names
+            )
         except Exception:
             world_map = ""
 
@@ -775,7 +806,13 @@ def main(config_path: str) -> None:
             gateway = Gateway(cfg)
         except Exception:
             gateway = None
+        if gateway is not None:
+            try:
+                from dmd.stt_health import SttHealthMonitor
 
+                stt_monitor = SttHealthMonitor(gateway, bus=bus)
+            except Exception:
+                stt_monitor = None
         try:
             from dmd.embedder import Embedder
 
@@ -793,9 +830,11 @@ def main(config_path: str) -> None:
                 lexicon_entries = []
 
     pool = _make_pool(cfg, bus)
-    engine = _make_engine(cfg, store, gateway, embedder, lexicon_entries, pool, bus, db_dir=db_dir)
+    engine = _make_engine(
+        cfg, store, gateway, embedder, lexicon_entries, pool, bus, db_dir=db_dir
+    )
     init_runner = _make_init_runner(cfg, store, gateway, embedder, lexicon_entries)
-    status_provider = _build_status_provider(cfg, store, gateway)
+    status_provider = _build_status_provider(cfg, store, gateway, stt_monitor)
 
     try:
         from dmd.sources.browser import BrowserAudioSource
@@ -824,7 +863,9 @@ def main(config_path: str) -> None:
                     except Exception as exc:
                         import logging
 
-                        logging.getLogger(__name__).warning("browser consumer ended: %s", exc)
+                        logging.getLogger(__name__).warning(
+                            "browser consumer ended: %s", exc
+                        )
 
                 @app.on_event("startup")
                 async def _start_browser_consumer() -> None:
@@ -858,21 +899,52 @@ def main(config_path: str) -> None:
                 except Exception:
                     pass
 
+    if stt_monitor is not None:
+
+        @app.on_event("startup")
+        async def _start_stt_health_monitor() -> None:
+            try:
+                await stt_monitor.start()
+            except Exception:
+                pass
+
+        @app.on_event("shutdown")
+        async def _stop_stt_health_monitor() -> None:
+            try:
+                await stt_monitor.stop()
+            except Exception:
+                pass
+
+    @app.on_event("shutdown")
+    async def _stop_engine() -> None:
+        if engine is not None:
+            try:
+                await engine.aclose()
+            except Exception:
+                pass
+
     host = (
         os.environ.get(
-            "DMD_HOST", getattr(getattr(cfg, "server", None), "host", "0.0.0.0") or "0.0.0.0"
+            "DMD_HOST",
+            getattr(getattr(cfg, "server", None), "host", "0.0.0.0") or "0.0.0.0",
         )
         if cfg
         else os.environ.get("DMD_HOST", "0.0.0.0")
     )
     port = int(
-        os.environ.get("DMD_PORT", str(getattr(getattr(cfg, "server", None), "port", 8760) or 8760))
+        os.environ.get(
+            "DMD_PORT", str(getattr(getattr(cfg, "server", None), "port", 8760) or 8760)
+        )
         or 8760
     )
     use_https = (
-        bool(getattr(getattr(cfg, "server", None), "https_enabled", False)) if cfg else False
+        bool(getattr(getattr(cfg, "server", None), "https_enabled", False))
+        if cfg
+        else False
     )
-    cert_file = getattr(getattr(cfg, "server", None), "cert_file", None) if cfg else None
+    cert_file = (
+        getattr(getattr(cfg, "server", None), "cert_file", None) if cfg else None
+    )
     key_file = getattr(getattr(cfg, "server", None), "key_file", None) if cfg else None
 
     try:

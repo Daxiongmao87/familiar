@@ -90,8 +90,8 @@ body {
   cursor: pointer;
 }
 .capture-btn.on { background: var(--err); color: #fff; border-color: var(--err); }
-.capture-status { font-size: 11px; color: var(--fg-dim); min-width: 80px; }
-
+ .stt-health-status { font-size: 11px; color: transparent; min-width: 8px; }
+ .stt-health-status.degraded { color: #f59e0b; font-weight: 600; }
 .dm-picker {
   position: relative;
   display: flex;

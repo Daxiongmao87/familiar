@@ -5,11 +5,12 @@ synthesis-job submission, and source consumption.
 
 from __future__ import annotations
 
+import asyncio
 import struct
 import time
 import uuid
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from .agent import AgentResult, WorkerAgent
@@ -68,7 +69,6 @@ def _lexicon_prompt(entries: list[LexiconEntry], max_chars: int = 500) -> str:
     return " ".join(parts)
 
 
-
 def _make_job(
     kind: str,
     ctx: dict,
@@ -83,6 +83,65 @@ def _make_job(
         t_created=time.monotonic(),
         context_window_s=context_window_s,
     )
+
+
+class _PerUserSttQueue:
+    """Per-user background STT workers so the audio feed never awaits STT inline.
+
+    ``consume_source`` enqueues each VAD-segmented utterance and keeps feeding
+    the segmenter immediately; a dedicated worker per user then transcribes and
+    routes the utterance sequentially. This keeps intake unblocked by STT
+    latency (a slow endpoint no longer stalls the VAD) while preserving
+    per-user ordering, so one user's slow transcription never delays the feed
+    or another user's utterances.
+    """
+
+    def __init__(
+        self, dispatch: Callable[[str, bytes, Utterance], Awaitable[None]]
+    ) -> None:
+        self._dispatch = dispatch
+        self._queues: dict[str, asyncio.Queue] = {}
+        self._tasks: dict[str, asyncio.Task] = {}
+        self._closed = False
+
+    def enqueue(self, user_id: str, audio: bytes, u: Utterance) -> None:
+        """Schedule ``u`` for transcription on that user's worker (non-blocking)."""
+        if self._closed:
+            return
+        q = self._queues.get(user_id)
+        if q is None:
+            q = asyncio.Queue()
+            self._queues[user_id] = q
+            self._tasks[user_id] = asyncio.create_task(self._run(user_id, q))
+        q.put_nowait((audio, u))
+
+    async def _run(self, user_id: str, q: asyncio.Queue) -> None:
+        while True:
+            audio, u = await q.get()
+            try:
+                await self._dispatch(user_id, audio, u)
+            except Exception:
+                pass
+            finally:
+                q.task_done()
+
+    async def drain(self) -> None:
+        """Wait until every enqueued utterance has been processed."""
+        for q in list(self._queues.values()):
+            await q.join()
+
+    async def close(self) -> None:
+        """Cancel all workers and drop any pending (unprocessed) utterances."""
+        self._closed = True
+        for task in self._tasks.values():
+            task.cancel()
+        for task in self._tasks.values():
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._queues.clear()
+        self._tasks.clear()
 
 
 class SessionEngine:
@@ -123,8 +182,12 @@ class SessionEngine:
         self.player_state = player_state
         self._recent: deque[Utterance] = deque(maxlen=30)
         self._hotword_prompt: str = _lexicon_prompt(entries)
-        self._active_cards: dict[str, Card] = {}  # card_id -> Card (mark-done bookkeeping)
-        self._scene_buffer: deque[dict] = deque(maxlen=12)  # recent scene notes (for the monitor)
+        self._active_cards: dict[
+            str, Card
+        ] = {}  # card_id -> Card (mark-done bookkeeping)
+        self._scene_buffer: deque[dict] = deque(
+            maxlen=12
+        )  # recent scene notes (for the monitor)
         self._agent = WorkerAgent(
             gw,
             store,
@@ -135,6 +198,7 @@ class SessionEngine:
             tool_registry=tool_registry,
         )
         self._monitor: TranscriptMonitor | None = None
+        self._stt_queue = _PerUserSttQueue(self._dispatch_utterance)
 
     @property
     def recent_utterances(self) -> list[Utterance]:
@@ -259,7 +323,9 @@ class SessionEngine:
     def _emit_scene(self, text: str, source: str) -> None:
         """Record and publish a scene-context note (ephemeral tier)."""
         self._scene_buffer.append({"text": text, "t": time.time(), "source": source})
-        self.on_event({"type": "scene_context", "text": text, "source": source, "t": time.time()})
+        self.on_event(
+            {"type": "scene_context", "text": text, "source": source, "t": time.time()}
+        )
 
     def _task_for_ctx(self, ctx: dict) -> str:
         utterance = ctx.get("utterance", "")
@@ -393,7 +459,9 @@ class SessionEngine:
                     "recent": list(self._recent)[-5:],
                     "source": "monitor",
                 }
-                job = _make_job("monitor", ctx, Priority.TRIGGER, context_window_s=120.0)
+                job = _make_job(
+                    "monitor", ctx, Priority.TRIGGER, context_window_s=120.0
+                )
 
                 async def _work() -> Card | None:
                     return await self._generate_card(ctx)
@@ -431,7 +499,7 @@ class SessionEngine:
                     offsets[user_id] = cur_len
                     if not audio:
                         continue
-                    await self._dispatch_utterance(user_id, audio, u)
+                    self._stt_queue.enqueue(user_id, audio, u)
         finally:
             for user_id, buf in buffers.items():
                 cur_len = len(buf)
@@ -443,10 +511,15 @@ class SessionEngine:
                 if not flush_utts:
                     continue
                 u = flush_utts[0]
-                await self._dispatch_utterance(user_id, tail, u)
+                self._stt_queue.enqueue(user_id, tail, u)
+            await self._stt_queue.drain()
             drain = getattr(self.pool, "drain", None)
             if drain is not None:
                 try:
                     await drain()
                 except Exception:
                     pass
+
+    async def aclose(self) -> None:
+        """Tear down the per-user STT workers and drop any pending work (shutdown)."""
+        await self._stt_queue.close()

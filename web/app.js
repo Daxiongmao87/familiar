@@ -277,8 +277,33 @@
       if (s && typeof s.project === 'string' && s.project) {
         projName.textContent = s.project;
       }
+      updateSttHealthStatus(s && s.stt_health);
     })
-    .catch(() => {});
+
+  setInterval(() => {
+    fetch('/api/status')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((s) => {
+        updateSttHealthStatus(s && s.stt_health);
+      })
+      .catch(() => {});
+  }, 10000);
+  function updateSttHealthStatus(health) {
+    const el = document.getElementById('stt-health-status');
+    if (!el) return;
+    if (health && typeof health === 'object' && typeof health.healthy === 'boolean') {
+      if (health.healthy) {
+        el.textContent = '';
+        el.className = 'stt-health-status';
+      } else {
+        el.textContent = '⚠ STT unavailable — transcription degraded';
+        el.className = 'stt-health-status degraded';
+      }
+    } else {
+      el.textContent = '';
+      el.className = 'stt-health-status';
+    }
+  }
 
   connect();
 

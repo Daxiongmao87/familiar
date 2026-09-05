@@ -144,7 +144,28 @@ class Gateway:
         )
         if r.status_code != 200:
             raise GatewayError(f"stt http {r.status_code}: {r.text[:200]}")
-        return r.json().get("text", "")
+
+    async def stt_health(self) -> tuple[bool, str]:
+        """Probe the configured STT endpoint reachability.
+
+        Returns ``(reachable, detail)``. ``reachable is False`` means the UI
+        must treat transcription as unavailable (degraded mode), which is the
+        difference between "nobody is talking" and "transcription is dead".
+        Uses a short per-request timeout so a dead endpoint can't stall callers.
+        """
+        ep = self._resolve("stt")
+        if not ep.base_url:
+            return False, "no STT base_url configured"
+        if getattr(ep, "dialect", "openai") == "whisperx":
+            url = ep.base_url.rstrip("/") + "/health"
+        else:
+            url = ep.base_url.rstrip("/") + "/v1/models"
+        try:
+            r = await self._client.get(url, headers=self._auth_headers(ep), timeout=3.0)
+        except httpx.HTTPError as exc:
+            return False, f"{type(exc).__name__}: {exc}"
+        if r.status_code < 500:
+            return True, f"http {r.status_code}"
 
     async def embed(self, texts: list[str]) -> np.ndarray:
         emb = self._cfg.models.embeddings
@@ -156,9 +177,7 @@ class Gateway:
             raise GatewayError("embeddings endpoint has no base_url")
         url = emb.base_url.rstrip("/") + "/embeddings"
         body = {"model": emb.model_id, "input": texts}
-        headers = (
-            {"Authorization": f"Bearer {emb.api_key}"} if emb.api_key else {}
-        )
+        headers = {"Authorization": f"Bearer {emb.api_key}"} if emb.api_key else {}
         r = await self._client.post(url, json=body, headers=headers)
         if r.status_code != 200:
             raise GatewayError(f"embed http {r.status_code}: {r.text[:200]}")
