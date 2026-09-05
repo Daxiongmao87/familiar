@@ -198,6 +198,10 @@ def _normalize(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     card_n = 0
     for ev in events:
         ev = json.loads(json.dumps(ev))
+        if ev.get("type") == "turn_latency":
+            # observability event: wall-clock stamp is noise, durations are
+            # deterministic under the fake gateway
+            ev["t"] = 0.0
         if ev.get("type") == "card":
             card = ev["card"]
             card["id"] = f"card-{card_n}"

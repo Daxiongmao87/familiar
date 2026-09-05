@@ -479,7 +479,9 @@ class SessionEngine:
             # event log is the sole truth) but must not fire the fast lane.
             return
 
+        t_lane0 = time.monotonic()
         is_trigger, kind = await detect_trigger(self.gw, u.text)
+        detect_ms = (time.monotonic() - t_lane0) * 1000.0
         if not is_trigger:
             return
 
@@ -495,6 +497,21 @@ class SessionEngine:
             return await self._generate_card(ctx)
 
         await self._submit_fire(job, _work)
+        # Fast-lane timing, published so the session log and tools/latency_probe
+        # can attribute the transcript -> answer gap: detect_trigger (fast LLM)
+        # vs everything after it (context assembly + agent work).
+        self.on_event(
+            {
+                "type": "turn_latency",
+                "user_id": u.user_id,
+                "text": u.text[:120],
+                "kind": kind,
+                "tier": self._tier_for_kind(kind),
+                "detect_ms": round(detect_ms, 1),
+                "lane_ms": round((time.monotonic() - t_lane0) * 1000.0, 1),
+                "t": time.time(),
+            }
+        )
 
     async def manual_query(self, text: str) -> None:
         ctx = {
