@@ -115,3 +115,13 @@
   `tests/unit/test_pipeline_latency.py` (4 tests: feed span with 0.4 s STT
   calls, cross-speaker independence — fast B finishes before slow A —
   per-user ordering, pool drain). Patch (pre-1.0).
+- **STT request params from config (SPEC §2 zero-hardcoding).** The gateway
+  hardcoded `diarize=false&align=false` on whisperx requests, suppressing the
+  whisperx-server's own defaults and blocking §7a attribution. `SttRole` gains
+  `diarize` (default true — feeds pyannote segments to attribution) and
+  `align` (default false — word timestamps nothing consumes);
+  `Gateway.transcribe_diarized()` returns `(text, speaker segments)`;
+  `config.example.yaml` documents both. Tests:
+  `tests/unit/test_gateway.py::test_whisperx_params_reflect_config_diarize_align`,
+  `::test_transcribe_diarized_returns_speaker_segments`,
+  `::test_stt_health_5xx_reports_unreachable`. Patch (pre-1.0).

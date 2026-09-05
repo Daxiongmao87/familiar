@@ -89,6 +89,14 @@ class SttRole(EndpointConfig):
     dialect: str = (
         "openai"  # "openai" = /v1/audio/transcriptions; "whisperx" = POST /transcribe
     )
+    # WhisperX request options, exposed from config (SPEC §2 zero-hardcoding:
+    # the gateway used to hardcode diarize=false&align=false, suppressing the
+    # whisperx-server's own defaults).
+    # diarize=true is what feeds pyannote speaker segments to §7a attribution
+    # and matches the whisperx-server default; align adds word timestamps
+    # nobody consumes, so it stays off.
+    diarize: bool = True
+    align: bool = False
 
 
 class EmbeddingsRole(BaseModel):

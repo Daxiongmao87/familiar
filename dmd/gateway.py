@@ -152,26 +152,70 @@ class Gateway:
         prompt: str | None = None,
         extra: dict | None = None,
     ) -> str:
+        text, _segments = await self._transcribe(
+            audio_bytes, filename=filename, prompt=prompt, extra=extra
+        )
+        return text
+
+    async def transcribe_diarized(
+        self,
+        audio_bytes: bytes,
+        *,
+        filename: str = "chunk.wav",
+        prompt: str | None = None,
+        extra: dict | None = None,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Transcribe and return ``(text, segments)`` for §7a attribution.
+
+        Segments are ``{"speaker", "start", "end", "text"}`` with start/end in
+        audio-relative seconds. The whisperx dialect yields speaker-labeled
+        segments when ``models.stt.diarize`` is true; the openai dialect
+        exposes no segment shape, so it returns an empty list.
+        """
+        return await self._transcribe(
+            audio_bytes, filename=filename, prompt=prompt, extra=extra
+        )
+
+    async def _transcribe(
+        self,
+        audio_bytes: bytes,
+        *,
+        filename: str,
+        prompt: str | None,
+        extra: dict | None,
+    ) -> tuple[str, list[dict[str, Any]]]:
         ep = self._resolve("stt")
         if not ep.base_url:
             raise GatewayError("stt role has no base_url")
         if getattr(ep, "dialect", "openai") == "whisperx":
             wurl = ep.base_url.rstrip("/") + "/transcribe"
+            # diarize/align come from config, never hardcoded (SPEC §2).
             r = await self._client.post(
                 wurl,
-                params={"diarize": "false", "align": "false"},
+                params={
+                    "diarize": "true" if ep.diarize else "false",
+                    "align": "true" if ep.align else "false",
+                },
                 content=audio_bytes,
                 headers={"Content-Type": "audio/wav", **self._auth_headers(ep)},
             )
             if r.status_code != 200:
                 raise GatewayError(f"stt http {r.status_code}: {r.text[:200]}")
             data = r.json()
+            segments = [
+                {
+                    "speaker": seg.get("speaker"),
+                    "start": float(seg.get("start", 0.0) or 0.0),
+                    "end": float(seg.get("end", 0.0) or 0.0),
+                    "text": (seg.get("text") or "").strip(),
+                }
+                for seg in data.get("segments", [])
+                if isinstance(seg, dict)
+            ]
             text = data.get("text") or ""
             if not text.strip():
-                text = " ".join(
-                    (seg.get("text") or "") for seg in data.get("segments", [])
-                )
-            return text.strip()
+                text = " ".join(s["text"] for s in segments if s["text"])
+            return text.strip(), segments
         url = ep.base_url.rstrip("/") + "/audio/transcriptions"
         files = {"file": (filename, audio_bytes, "audio/wav")}
         form: dict[str, str] = {}
@@ -188,7 +232,7 @@ class Gateway:
         if r.status_code != 200:
             raise GatewayError(f"stt http {r.status_code}: {r.text[:200]}")
         data = r.json()
-        return (data.get("text") or "").strip()
+        return (data.get("text") or "").strip(), []
 
     async def stt_health(self) -> tuple[bool, str]:
         """Probe the configured STT endpoint reachability.
