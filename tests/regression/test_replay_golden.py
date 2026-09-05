@@ -126,10 +126,10 @@ class FakeGateway:
             }
         if "grappl" in user_text.lower():
             # Pre-grounding contract (2026-09-05): for rules tasks the engine
-            # already fired web_search and injected PRE-RETRIEVED WEB RESULTS
+            # already fired web_search and injected RULE SOURCE SEARCH RESULTS
             # before this decode, so the model answers the grounded card
             # directly rather than issuing another in-loop tool call.
-            if "PRE-RETRIEVED WEB RESULTS" in user_text:
+            if "RULE SOURCE SEARCH RESULTS" in user_text:
                 return _rules_card_json()
             if "TOOL RESULT" in user_text:
                 # In-loop search completed (hermetic fallback when the

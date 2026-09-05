@@ -167,6 +167,11 @@ def _content_str(content: Any) -> str:
 # Worker agent
 # ---------------------------------------------------------------------------
 
+# Hard brevity ceiling for card bodies (owner directive 2026-09-05). A card
+# is glanced at in 2-3s mid-game, never read end-to-end.
+_MAX_CARD_CHARS = 700
+
+
 # Structured-output schema used when the model must commit to a final CARD.
 # Deliberately schema-only: DCs are plain integers supplied by the model per
 # scene, never baked rule constants (SPEC §2: no baked rules).
@@ -224,6 +229,16 @@ Rules:
   call web_search (or retrieve) at least once BEFORE the final card. A ruling
   produced from memory alone is not verified — the DM needs the actual rule
   source. State the source (URL or campaign file) in body_md when you can.
+- BREVITY IS THE CARD'S JOB (owner directive 2026-09-05): a card is read in
+  2-3 seconds mid-game, at a glance, while the DM keeps running the table.
+  Cards MUST be short and scannable:
+  * Under ~700 characters total body_md. 3-6 short lines beats paragraphs.
+  * Lead with the answer. The DM never reads a preface.
+  * Use compact lines, bullets, or a small table — NEVER dense paragraphs.
+  * At most ONE source link at the bottom if needed. Never list several URLs.
+  * No hedging, no "depends on the ruleset", no meta-commentary about the
+    prompt or sources. State the ruling.
+  * A RULING card is 1-3 lines: the rule, the DC/skill, done.
 - Respond with JSON only — no prose outside the JSON object."""
 
 
@@ -286,13 +301,12 @@ class WorkerAgent:
                 results = hunt.get("results") or []
                 if results:
                     lines = [
-                        f"- {r.get('title','')} | {r.get('url','')}\n  {r.get('snippet','')}"
-                        for r in results[:4]
+                        f"- {r.get('title','')} | {r.get('url','')}"
+                        for r in results[:3]
                     ]
                     grounding_block = (
-                        "PRE-RETRIEVED WEB RESULTS (grounding — the rule source):\n"
-                        + "\n".join(lines)
-                        + "\nUse these to produce the ruling card; cite the URL."
+                        "RULE SOURCE SEARCH RESULTS (grounding only — do NOT "
+                        "quote these in the card):\n" + "\n".join(lines)
                     )
                     grounding_calls = 1
             except Exception:
@@ -452,10 +466,22 @@ class WorkerAgent:
         player_ids = parsed.get("player_ids")
         if not isinstance(player_ids, list):
             player_ids = []
+        # Hard brevity cap (owner directive 2026-09-05): a card is glanced at
+        # mid-game, never read. Enforce after the fact so no model output can
+        # ship as a wall of text. Body keeps the lead; anything past the cap
+        # is dropped rather than shown.
+        body = str(parsed.get("body_md", ""))
+        if len(body) > _MAX_CARD_CHARS:
+            body = body[:_MAX_CARD_CHARS]
+            # Cut at the last line boundary inside the cap so the DM never
+            # sees a mid-word truncation.
+            cut = body.rfind("\n")
+            if cut > _MAX_CARD_CHARS * 0.6:
+                body = body[:cut]
         return {
             "kind": str(parsed.get("kind", "info")),
             "title": str(parsed.get("title", "Note")),
-            "body_md": str(parsed.get("body_md", "")),
+            "body_md": body,
             "player_ids": [str(p) for p in player_ids][:8],
             "items": items[:40],
         }

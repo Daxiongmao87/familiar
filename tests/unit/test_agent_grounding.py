@@ -32,7 +32,7 @@ class _FakeGw:
                 user_text = m["content"]
                 break
         # After the grounding block is injected, the model writes the card.
-        if "PRE-RETRIEVED WEB RESULTS" in user_text:
+        if "RULE SOURCE SEARCH RESULTS" in user_text:
             self.final_body = (
                 "Grapple per SRD (source: https://example.com/grapple) — "
                 "Athletics vs Athletics."

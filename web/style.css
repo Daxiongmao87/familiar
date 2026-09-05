@@ -216,6 +216,10 @@ body {
   font-size: 13px;
   color: var(--fg);
   word-break: break-word;
+  /* Glanceable at the table (owner 2026-09-05): bodies clamp to ~6 lines;
+     overflow scrolls inside the card, never stretching the whole grid. */
+  max-height: 9.5em;
+  overflow-y: auto;
 }
 
 .card-body p { margin: 0 0 6px 0; }
