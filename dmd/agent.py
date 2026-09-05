@@ -411,6 +411,12 @@ class WorkerAgent:
         items = parsed.get("items")
         if not isinstance(items, list):
             items = []
+        # The model often puts the skill-check table only in body_md and omits
+        # structured items. Derive items from a markdown table so rows stay
+        # addressable (SPEC §9) and the monitor can match "we find the silver
+        # dagger" to the right card by item name.
+        if not items:
+            items = _items_from_table(str(parsed.get("body_md", "")))
         player_ids = parsed.get("player_ids")
         if not isinstance(player_ids, list):
             player_ids = []
@@ -535,6 +541,65 @@ class WorkerAgent:
 # ---------------------------------------------------------------------------
 # web helpers
 # ---------------------------------------------------------------------------
+
+
+def _items_from_table(md: str) -> list[dict[str, Any]]:
+    """Best-effort: extract structured items from a markdown table.
+
+    The worker schema asks the model for ``items`` with dc_find, but ling-tiny
+    often writes the skill-check table only into body_md. When items are
+    absent, derive them from body rows like
+    ``| Hidden pouch | Perception <n> | 1 | 150 gp | ... |`` where <n> is the
+    DC written by the model. Returns [] when the body has no parseable table.
+    """
+    out: list[dict[str, Any]] = []
+    rows: list[list[str]] = []
+    for raw in md.splitlines():
+        line = raw.strip()
+        if not (line.startswith("|") and line.endswith("|")):
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if not cells:
+            continue
+        # skip the separator row
+        if all(re.fullmatch(r":?-{3,}:?", c) for c in cells if c):
+            continue
+        rows.append(cells)
+    if len(rows) < 2:
+        return []
+    header = [h.lower() for h in rows[0]]
+    for cells in rows[1:]:
+        row: dict[str, str] = {}
+        for i, h in enumerate(header):
+            if i < len(cells) and cells[i]:
+                row[h] = cells[i]
+        name = row.get("find") or row.get("name") or row.get("item")
+        if not name:
+            continue
+        skill_cell = row.get("skill / dc") or row.get("skill/dc") or row.get("dc") or ""
+        m = re.search(r"(\d+)", skill_cell)
+        item: dict[str, Any] = {
+            "name": name[:200],
+            "quantity": _int_or(row.get("qty") or row.get("quantity"), 1),
+            "notes": row.get("notes", "")[:300],
+        }
+        if m:
+            item["dc_find"] = int(m.group(1))
+        else:
+            item["dc_find"] = None
+        out.append(item)
+        if len(out) >= 40:
+            break
+    return out
+
+
+def _int_or(s: str | None, default: int) -> int:
+    if not s:
+        return default
+    try:
+        return int(float(s))
+    except (TypeError, ValueError):
+        return default
 
 
 def _urlquote(s: str) -> str:
