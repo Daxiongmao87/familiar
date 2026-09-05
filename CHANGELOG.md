@@ -92,7 +92,33 @@
   Verification tooling; non-release-affecting.
 
 ### Fixed
-- **Fast-lane classifier dominated the transcript→answer budget (live defect,
+- **Cards never surfaced in the live UI (owner-verified defect, 2026-09-05).**
+  Three compounding causes, all fixed:
+  (1) **Collapsed-by-default presentation** — `web/app.js:buildCard` added
+  `collapsed` to every *new* card and `.card.collapsed .card-body` is
+  `display:none`, so freshly generated cards arrived hidden/unreadable,
+  contradicting SPEC §1/§2/§8/§9 ("read, expand if long, mark done").
+  Now a fresh card renders **expanded with title + body visible**; only a
+  Done (set-aside) card is collapsed. The Done transition also stopped
+  double-binding click toggles (title click now expands a done card once,
+  not twice) and now opens the set-aside done area so a card moving to done
+  doesn't silently vanish into a closed `<details>`.
+  (2) **No REST view / no replay** — cards only existed as live WS pushes;
+  there was no `GET /api/cards` (the route 404'd) and a freshly-loaded or
+  reconnected DM window started empty forever. Added `GET /api/cards`
+  (the REST view of the same `engine._active_cards` store mark-done reads,
+  newest-first, active + done) and the UI now fetches it on WS connect and
+  renders through the same `addCard` path, id-deduplicated against live
+  pushes (fixes a double-render on active cards too).
+  Verified live on :8760 (HTTPS): a real manual query produced a
+  `skill_table` card that reached a `/ws` subscriber in 12.5 s **and**
+  `GET /api/cards`; DOM audit at 1280 px and 380 px confirms fresh cards
+  expanded/readable, done cards collapsed + is-done in the open done area,
+  and done-title click re-expands (`screenshots/d1-d4_*`, ephemeral).
+  Minor (pre-1.0; new additive REST endpoint + client replay for a live
+  defect).
+
+### Fast-lane classifier dominated the transcript→answer budget (live defect,
   Priority-1 measurement, 2026-09-05).** `detect_trigger` asked the fast role
   (ling-3.0-tiny) for every utterance *before* the regex fallback. That
   endpoint is reasoning-first: a bare classification request emits ~180 hidden

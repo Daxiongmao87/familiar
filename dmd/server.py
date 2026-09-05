@@ -579,6 +579,30 @@ def create_app(
         except Exception as exc:
             return {"ok": False, "detail": f"error:{type(exc).__name__}"}
 
+    @app.get("/api/cards")
+    async def api_cards() -> dict[str, Any]:
+        """Live card store (active + set-aside done), newest first (SPEC §9).
+
+        The WS bus only pushes cards generated after a client connects; this is
+        the REST view of the same ``engine._active_cards`` store that
+        mark-done reads, so a freshly-loaded or reconnected DM window can
+        recover current cards instead of starting empty.
+        """
+        if engine is None:
+            return {"ok": True, "cards": []}
+        getter = getattr(engine, "active_cards", None)
+        if getter is None:
+            return {"ok": True, "cards": []}
+        try:
+            cards = list(getter())
+            cards.sort(
+                key=lambda c: float(getattr(c, "t_context", 0.0) or 0.0),
+                reverse=True,
+            )
+            return {"ok": True, "cards": [_card_to_dict(c) for c in cards]}
+        except Exception as exc:
+            return {"ok": False, "detail": f"error:{type(exc).__name__}", "cards": []}
+
     @app.post("/api/card/done")
     async def api_card_done(req: Request) -> dict[str, Any]:
         """Mark a card done — set aside, never deleted (SPEC §9 lifecycle)."""

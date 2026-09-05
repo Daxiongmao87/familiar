@@ -189,7 +189,11 @@
     article.setAttribute('data-card-id', (card && card.id) ? String(card.id) : '');
     const kind = (card && card.kind) ? String(card.kind) : 'info';
     article.setAttribute('data-kind', kind);
-    article.className = 'card kind-' + kind + (done ? ' is-done' : ' collapsed');
+    // SPEC §§1-2/8-9: a fresh card must arrive READABLE (title + body
+    // visible); the DM's only actions are read / expand-if-long / mark done.
+    // Only a Done (set-aside) card is collapsed — still viewable by clicking
+    // its title, never deleted.
+    article.className = 'card kind-' + kind + (done ? ' is-done collapsed' : '');
 
     const head = document.createElement('div');
     head.className = 'card-head';
@@ -226,13 +230,20 @@
     body.innerHTML = renderMarkdown(md);
     article.appendChild(body);
 
-    // Expand on click: content was pre-generated; nothing loads on click.
-    head.addEventListener('click', () => article.classList.toggle('collapsed'));
+    // Expand/collapse for screen space (SPEC §9 "pre-generated, expand-on-
+    // click": nothing loads on click). On an active card the whole head toggles;
+    // on a Done (set-aside) card only the title toggles, so badges/head clicks
+    // stay inert and the card is read by expanding, not by accident.
+    head.addEventListener('click', (ev) => {
+      if (article.classList.contains('is-done') && !ev.target.closest('h2')) return;
+      article.classList.toggle('collapsed');
+    });
     return article;
   }
 
   function addCard(card) {
     if (!card || !card.id) return;
+    if (cardStream.querySelector('[data-card-id="' + card.id + '"]')) return;
     if (doneStream.querySelector('[data-card-id="' + card.id + '"]')) return;
     const done = String(card.status || 'active') === 'done';
     const article = buildCard(card, done);
@@ -244,20 +255,37 @@
     }
   }
 
+  function addInitialCards(cards) {
+    // Cards from GET /api/cards arrive newest-first (server ordering); render
+    // oldest -> newest so the prepend in addCard leaves newest at the top.
+    if (!Array.isArray(cards) || cards.length === 0) return;
+    let sawDone = false;
+    for (const c of cards) {
+      if (c && String(c.status || 'active') === 'done') sawDone = true;
+    }
+    for (let i = cards.length - 1; i >= 0; i--) addCard(cards[i]);
+    if (sawDone && doneArea) doneArea.open = true;
+  }
+
+  function loadCards() {
+    fetch('/api/cards')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && Array.isArray(d.cards)) addInitialCards(d.cards);
+      })
+      .catch(() => {});
+  }
+
   function markCardDone(cardId) {
     if (!cardId) return;
     const el = cardStream.querySelector('[data-card-id="' + cardId + '"]');
     if (!el) return;
-    el.classList.remove('collapsed');
     el.classList.add('collapsed', 'is-done');
     const btn = el.querySelector('.card-done-btn');
     if (btn) btn.remove();
-    el.addEventListener('click', (ev) => {
-      if (ev.target.closest('h2')) el.classList.toggle('collapsed');
-    });
     doneStream.prepend(el);
     updateDoneCount();
-    if (doneArea) doneArea.open = doneArea.open;
+    if (doneArea) doneArea.open = true;
   }
 
   function updateDoneCount() {
@@ -350,6 +378,11 @@
     ws.onopen = () => {
       setConnected(true);
       backoffMs = BACKOFF_MIN;
+      // The WS bus only pushes events that occur after connect (no server-side
+      // replay); load the existing card set once so a freshly-opened / reconnected
+      // DM window shows current cards instead of starting empty. addCard's id
+      // dedup makes any overlap with live pushes harmless.
+      loadCards();
     };
     ws.onmessage = (ev) => {
       let msg;

@@ -182,6 +182,9 @@ class _FakeEngine:
         card.status = "done"
         return True
 
+    def active_cards(self) -> list[Card]:
+        return list(self.cards.values())
+
     async def manual_query(self, text: str) -> None:
         return None
 
@@ -227,6 +230,39 @@ def test_card_done_endpoint_sets_aside() -> None:
     with client:
         r2 = client.post("/api/card/done", json={"card_id": "missing"})
     assert r2.json()["ok"] is False
+
+
+def test_cards_endpoint_lists_live_store_newest_first() -> None:
+    """GET /api/cards is the REST view of the store mark-done reads (SPEC §9):
+    the same cards the WS pushes, serialized newest-first, active and done."""
+    eng = _FakeEngine()
+    eng.cards["old"] = Card(
+        id="old", kind="loot", title="Old loot", body_md="a", t_context=1.0, player_ids=[]
+    )
+    eng.cards["new"] = Card(
+        id="new", kind="rules", title="Ruling", body_md="b", t_context=2.0,
+        status="done", player_ids=["kael"],
+    )
+    client = _client(eng)
+    with client:
+        r = client.get("/api/cards")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    ids = [c["id"] for c in body["cards"]]
+    assert ids == ["new", "old"], "cards must be newest-first"
+    by_id = {c["id"]: c for c in body["cards"]}
+    assert by_id["new"]["status"] == "done" and by_id["new"]["player_ids"] == ["kael"]
+    assert by_id["old"]["status"] == "active"
+
+
+def test_cards_endpoint_empty_without_engine() -> None:
+    app = create_app(cfg=None, engine=None, init_runner=None)
+    client = TestClient(app)
+    with client:
+        r = client.get("/api/cards")
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "cards": []}
 
 
 def test_card_to_dict_preserves_lifecycle_fields() -> None:
