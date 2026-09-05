@@ -156,3 +156,29 @@
   statically guards shipped `dmd/` + `web/` sources against dice notation,
   DC/AC constants, and rule-table fragments (the grep audit passed clean;
   the test keeps it clean). Test hardening; non-release-affecting.
+- **§15 session controls + §9 card lifecycle UI; §10 scene strip rendered.**
+  Backend: `SessionEngine` gains `set_capture_paused` (audio dropped at the
+  feed loop; half-open VAD utterances discarded via new
+  `UtteranceSegmenter.drop_user` — nothing stitches across the pause) and
+  `set_ooc` (transcript keeps flowing — the event log is the sole truth —
+  while fast-lane triggers and the proactive monitor go silent); both publish
+  `capture_state` / `ooc_state` events so every client stays in sync.
+  Endpoints: `POST /api/capture`, `POST /api/ooc`, `POST /api/card/done`
+  (mark-done = set aside, never delete), `GET /api/players` (badge names);
+  `/api/status` reports `controls` + active `speakers`;
+  `_card_to_dict` now carries `status` + `player_ids` (the card event was
+  silently dropping both). Frontend: topbar Pause / OOC buttons (state-
+  reflected, `body.capture-paused` dims the transcript); player badges on
+  cards (display-name resolved, hue-stable, `shared` for unowned); cards
+  render collapsed and expand on head click (pre-generated content); Done
+  button moves a card into the set-aside `<details>` done area with live
+  count; scene-context notes now render in their own strip with fade-and-drop
+  decay (they were emitted but never displayed before). Visual verification:
+  13 DOM assertions at 1440x900 and 380x800 (E1 named transcript, E2 badges,
+  E3 collapsed, E4 expand-on-click + table, E5 done lifecycle incl. server
+  state sync, E6 scene note, E7/E7c control round-trip, E8 mobile single
+  column) + 7-point pixel audit (A1-A7) of `screenshots/v1…v6` — all pass.
+  Captions: screenshots/ is gitignored; the captures themselves were not
+  viewable by this agent (no image input) — owner should eyeball them.
+  Tests: `tests/unit/test_session_controls.py` (8). Minor (pre-1.0; new
+  endpoints/contracts).

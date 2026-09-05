@@ -4,6 +4,10 @@
   const phaseBadge = document.getElementById('phase-badge');
   const transcriptPane = document.getElementById('transcript-pane');
   const cardStream = document.getElementById('card-stream');
+  const scenePane = document.getElementById('scene-pane');
+  const doneArea = document.getElementById('done-area');
+  const doneStream = document.getElementById('done-stream');
+  const doneCount = document.getElementById('done-count');
   const queryInput = document.getElementById('query-input');
   const querySend = document.getElementById('query-send');
 
@@ -11,6 +15,20 @@
   let backoffMs = 1000;
   const BACKOFF_MIN = 1000;
   const BACKOFF_MAX = 10000;
+  const playerNames = {};
+
+  fetch('/api/players')
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => {
+      if (d && Array.isArray(d.players)) {
+        for (const p of d.players) playerNames[p.id] = p.name || p.id;
+      }
+    })
+    .catch(() => {});
+
+  function playerLabel(pid) {
+    return playerNames[pid] || String(pid);
+  }
 
   function hueFor(userId) {
     let h = 0;
@@ -118,7 +136,7 @@
     return out.join('\n');
   }
 
-  function addTranscript(userId, text) {
+  function addTranscript(userId, text, name) {
     const div = document.createElement('div');
     div.setAttribute('data-testid', 'transcript-line');
     div.className = 'transcript-line';
@@ -131,7 +149,7 @@
 
     const who = document.createElement('span');
     who.className = 'user-id';
-    who.textContent = userId || '';
+    who.textContent = name || playerLabel(userId) || '';
     div.appendChild(who);
 
     const txt = document.createElement('span');
@@ -143,17 +161,64 @@
     transcriptPane.scrollTop = transcriptPane.scrollHeight;
   }
 
-  function addCard(card) {
+  function cardPlayerBadges(card) {
+    const wrap = document.createElement('div');
+    wrap.className = 'card-players';
+    const ids = Array.isArray(card.player_ids) ? card.player_ids : [];
+    if (ids.length === 0) {
+      const b = document.createElement('span');
+      b.className = 'player-badge shared';
+      b.textContent = 'shared';
+      wrap.appendChild(b);
+    } else {
+      for (const pid of ids) {
+        const b = document.createElement('span');
+        b.className = 'player-badge';
+        b.style.borderColor = 'hsl(' + hueFor(String(pid)) + ', 70%, 60%)';
+        b.textContent = playerLabel(pid);
+        b.setAttribute('data-player', String(pid));
+        wrap.appendChild(b);
+      }
+    }
+    return wrap;
+  }
+
+  function buildCard(card, done) {
     const article = document.createElement('article');
     article.setAttribute('data-testid', 'card');
+    article.setAttribute('data-card-id', (card && card.id) ? String(card.id) : '');
     const kind = (card && card.kind) ? String(card.kind) : 'info';
     article.setAttribute('data-kind', kind);
-    article.className = 'card kind-' + kind;
+    article.className = 'card kind-' + kind + (done ? ' is-done' : ' collapsed');
+
+    const head = document.createElement('div');
+    head.className = 'card-head';
 
     const title = document.createElement('h2');
     title.className = 'card-title';
     title.textContent = (card && card.title) ? String(card.title) : '';
-    article.appendChild(title);
+    head.appendChild(title);
+    head.appendChild(cardPlayerBadges(card || {}));
+
+    if (!done) {
+      const doneBtn = document.createElement('button');
+      doneBtn.type = 'button';
+      doneBtn.className = 'card-done-btn';
+      doneBtn.textContent = '\u2713 Done';
+      doneBtn.title = 'Mark resolved (set aside, never deleted)';
+      doneBtn.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        try {
+          await fetch('/api/card/done', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ card_id: article.getAttribute('data-card-id') })
+          });
+        } catch (e) { /* the card_done event will arrive when it lands */ }
+      });
+      head.appendChild(doneBtn);
+    }
+    article.appendChild(head);
 
     const body = document.createElement('div');
     body.className = 'card-body';
@@ -161,7 +226,63 @@
     body.innerHTML = renderMarkdown(md);
     article.appendChild(body);
 
-    cardStream.prepend(article);
+    // Expand on click: content was pre-generated; nothing loads on click.
+    head.addEventListener('click', () => article.classList.toggle('collapsed'));
+    return article;
+  }
+
+  function addCard(card) {
+    if (!card || !card.id) return;
+    if (doneStream.querySelector('[data-card-id="' + card.id + '"]')) return;
+    const done = String(card.status || 'active') === 'done';
+    const article = buildCard(card, done);
+    if (done) {
+      doneStream.prepend(article);
+      updateDoneCount();
+    } else {
+      cardStream.prepend(article);
+    }
+  }
+
+  function markCardDone(cardId) {
+    if (!cardId) return;
+    const el = cardStream.querySelector('[data-card-id="' + cardId + '"]');
+    if (!el) return;
+    el.classList.remove('collapsed');
+    el.classList.add('collapsed', 'is-done');
+    const btn = el.querySelector('.card-done-btn');
+    if (btn) btn.remove();
+    el.addEventListener('click', (ev) => {
+      if (ev.target.closest('h2')) el.classList.toggle('collapsed');
+    });
+    doneStream.prepend(el);
+    updateDoneCount();
+    if (doneArea) doneArea.open = doneArea.open;
+  }
+
+  function updateDoneCount() {
+    if (doneCount) doneCount.textContent = String(doneStream.children.length);
+  }
+
+  const SCENE_TTL_MS = 90000;
+
+  function addSceneNote(text, source, t) {
+    if (!scenePane || !text) return;
+    const note = document.createElement('div');
+    note.className = 'scene-note';
+    note.setAttribute('data-testid', 'scene-note');
+    const src = document.createElement('span');
+    src.className = 'scene-source';
+    src.textContent = source === 'monitor' ? 'monitor' : 'scene';
+    note.appendChild(src);
+    const body = document.createElement('span');
+    body.className = 'scene-text';
+    body.textContent = text;
+    note.appendChild(body);
+    scenePane.prepend(note);
+    while (scenePane.children.length > 8) scenePane.lastChild.remove();
+    setTimeout(() => note.classList.add('fading'), SCENE_TTL_MS / 2);
+    setTimeout(() => { if (note.parentNode) note.remove(); }, SCENE_TTL_MS);
   }
 
   function setPhase(text) {
@@ -182,10 +303,22 @@
     if (!msg || typeof msg !== 'object') return;
     switch (msg.type) {
       case 'transcript':
-        addTranscript(msg.user_id || '', msg.text || '');
+        addTranscript(msg.user_id || '', msg.text || '', msg.name || '');
         break;
       case 'card':
         if (msg.card) addCard(msg.card);
+        break;
+      case 'card_done':
+        markCardDone(msg.card_id || '');
+        break;
+      case 'scene_context':
+        addSceneNote(msg.text || '', msg.source || '', msg.t);
+        break;
+      case 'capture_state':
+        setCaptureCtlUI(!!msg.paused);
+        break;
+      case 'ooc_state':
+        setOocUI(!!msg.on);
         break;
       case 'status':
         setPhase(msg.state || msg.detail || '');
@@ -278,6 +411,10 @@
         projName.textContent = s.project;
       }
       updateSttHealthStatus(s && s.stt_health);
+      if (s && s.controls) {
+        setCaptureCtlUI(!!s.controls.capture_paused);
+        setOocUI(!!s.controls.ooc);
+      }
     })
 
   setInterval(() => {
@@ -303,6 +440,56 @@
       el.textContent = '';
       el.className = 'stt-health-status';
     }
+  }
+
+  // --- Session controls (SPEC §15): pause-capture + mark-OOC ---
+  const pauseBtn = document.getElementById('pause-capture');
+  const oocBtn = document.getElementById('ooc-toggle');
+  let capturePaused = false;
+  let oocOn = false;
+
+  function setCaptureCtlUI(paused) {
+    capturePaused = !!paused;
+    if (!pauseBtn) return;
+    pauseBtn.textContent = capturePaused ? '\u25B6 Resume' : '\u23F8 Pause';
+    pauseBtn.classList.toggle('active', capturePaused);
+    document.body.classList.toggle('capture-paused', capturePaused);
+  }
+
+  function setOocUI(on) {
+    oocOn = !!on;
+    if (!oocBtn) return;
+    oocBtn.textContent = oocOn ? 'OOC \u00B7 on' : 'OOC';
+    oocBtn.classList.toggle('active', oocOn);
+    document.body.classList.toggle('ooc', oocOn);
+  }
+
+  if (pauseBtn) {
+    pauseBtn.addEventListener('click', async () => {
+      try {
+        const r = await fetch('/api/capture', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ paused: !capturePaused })
+        });
+        const d = await r.json();
+        if (d && d.ok) setCaptureCtlUI(!!d.paused);
+      } catch (e) { /* capture_state event will reconcile */ }
+    });
+  }
+
+  if (oocBtn) {
+    oocBtn.addEventListener('click', async () => {
+      try {
+        const r = await fetch('/api/ooc', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ on: !oocOn })
+        });
+        const d = await r.json();
+        if (d && d.ok) setOocUI(!!d.on);
+      } catch (e) { /* ooc_state event will reconcile */ }
+    });
   }
 
   connect();

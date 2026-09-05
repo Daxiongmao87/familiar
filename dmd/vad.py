@@ -100,6 +100,15 @@ class UtteranceSegmenter:
         self._reset(state)
         return emitted
 
+    def drop_user(self, user_id: str) -> None:
+        """Discard all segmentation state for a user (pause-capture boundary).
+
+        Unlike flush_user, a half-open utterance is thrown away instead of
+        emitted: audio around a capture pause must not be stitched into one
+        utterance across the gap.
+        """
+        self._state.pop(user_id, None)
+
     @staticmethod
     def _build(user_id: str, state: _UserState) -> Utterance | None:
         if not state.pcm:

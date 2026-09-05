@@ -113,6 +113,8 @@ def _card_to_dict(card: Any) -> dict[str, Any]:
             "body_md": str(card.get("body_md", "")),
             "t_context": float(card.get("t_context", 0.0) or 0.0),
             "meta": dict(card.get("meta") or {}),
+            "status": str(card.get("status") or "active"),
+            "player_ids": [str(p) for p in (card.get("player_ids") or [])],
         }
     if is_dataclass(card):
         data = asdict(card)
@@ -124,6 +126,8 @@ def _card_to_dict(card: Any) -> dict[str, Any]:
             "body_md": getattr(card, "body_md", ""),
             "t_context": getattr(card, "t_context", 0.0),
             "meta": getattr(card, "meta", {}),
+            "status": getattr(card, "status", "active"),
+            "player_ids": getattr(card, "player_ids", []),
         }
     return {
         "id": str(data.get("id", "")),
@@ -132,6 +136,8 @@ def _card_to_dict(card: Any) -> dict[str, Any]:
         "body_md": str(data.get("body_md", "")),
         "t_context": float(data.get("t_context", 0.0) or 0.0),
         "meta": dict(data.get("meta") or {}),
+        "status": str(data.get("status") or "active"),
+        "player_ids": [str(p) for p in (data.get("player_ids") or [])],
     }
 
 
@@ -519,6 +525,81 @@ def create_app(
         except Exception as e:
             return {"ok": False, "detail": str(e)}
 
+    @app.post("/api/capture")
+    async def api_capture(req: Request) -> dict[str, Any]:
+        """Pause/resume audio capture into the pipeline (SPEC §15 control)."""
+        if engine is None:
+            return {"ok": False, "detail": "no engine"}
+        try:
+            payload = await req.json()
+        except Exception:
+            payload = {}
+        paused = bool(payload.get("paused", False)) if isinstance(payload, dict) else False
+        setter = getattr(engine, "set_capture_paused", None)
+        if setter is None:
+            return {"ok": False, "detail": "engine has no capture control"}
+        try:
+            state = setter(paused)
+            return {"ok": True, "paused": bool(state.get("paused"))}
+        except Exception as exc:
+            return {"ok": False, "detail": f"error:{type(exc).__name__}"}
+
+    @app.post("/api/ooc")
+    async def api_ooc(req: Request) -> dict[str, Any]:
+        """Toggle out-of-character mode: transcript keeps flowing, triggers
+        and the proactive monitor stay silent (SPEC §15 control)."""
+        if engine is None:
+            return {"ok": False, "detail": "no engine"}
+        try:
+            payload = await req.json()
+        except Exception:
+            payload = {}
+        on = bool(payload.get("on", False)) if isinstance(payload, dict) else False
+        setter = getattr(engine, "set_ooc", None)
+        if setter is None:
+            return {"ok": False, "detail": "engine has no ooc control"}
+        try:
+            state = setter(on)
+            return {"ok": True, "on": bool(state.get("on"))}
+        except Exception as exc:
+            return {"ok": False, "detail": f"error:{type(exc).__name__}"}
+
+    @app.post("/api/card/done")
+    async def api_card_done(req: Request) -> dict[str, Any]:
+        """Mark a card done — set aside, never deleted (SPEC §9 lifecycle)."""
+        if engine is None:
+            return {"ok": False, "detail": "no engine"}
+        try:
+            payload = await req.json()
+        except Exception:
+            return {"ok": False, "detail": "invalid json"}
+        card_id = str(payload.get("card_id", "") or "") if isinstance(payload, dict) else ""
+        if not card_id.strip():
+            return {"ok": False, "detail": "empty card_id"}
+        marker = getattr(engine, "mark_card_done", None)
+        if marker is None:
+            return {"ok": False, "detail": "engine has no card lifecycle"}
+        try:
+            marked = await marker(card_id)
+            return {"ok": bool(marked), "card_id": card_id}
+        except Exception as exc:
+            return {"ok": False, "detail": f"error:{type(exc).__name__}"}
+
+    @app.get("/api/players")
+    async def api_players() -> dict[str, Any]:
+        """Seeded players (id + display name) for card player-badges (§9/§15)."""
+        ps = getattr(engine, "player_state", None) if engine is not None else None
+        if ps is None:
+            return {"ok": True, "players": []}
+        try:
+            players = [
+                {"id": str(p.get("player_id", "")), "name": str(p.get("name", "") or p.get("player_id", ""))}
+                for p in ps.all_players()
+            ]
+            return {"ok": True, "players": players}
+        except Exception as exc:
+            return {"ok": False, "detail": f"{type(exc).__name__}", "players": []}
+
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket) -> None:
         await websocket.accept()
@@ -582,6 +663,7 @@ def _build_status_provider(
     store: Any,
     gateway: Any,
     stt_monitor: Any = None,
+    engine: Any = None,
 ) -> Callable[[], dict[str, Any]]:
 
     def _snapshot() -> dict[str, Any]:
@@ -607,7 +689,7 @@ def _build_status_provider(
                     roles[role] = False
         else:
             roles = {"synthesis": False, "fast": False, "vision": False, "stt": False}
-        return {
+        out: dict[str, Any] = {
             "project": project,
             "indexed_docs": indexed_docs,
             "entities": entities,
@@ -617,6 +699,26 @@ def _build_status_provider(
                 else {"healthy": None, "detail": ""}
             ),
         }
+        if engine is not None:
+            try:
+                out["controls"] = {
+                    "capture_paused": bool(getattr(engine, "capture_paused", False)),
+                    "ooc": bool(getattr(engine, "ooc", False)),
+                }
+            except Exception:
+                pass
+            tracker = getattr(engine, "speaking_tracker", None)
+            if tracker is not None:
+                try:
+                    snap = tracker.snapshot()
+                    names = snap.get("named", {}) if isinstance(snap, dict) else {}
+                    out["speakers"] = [
+                        {"id": uid, "name": names.get(uid)}
+                        for uid in sorted(snap.get("active", {}))
+                    ]
+                except Exception:
+                    pass
+        return out
 
     return _snapshot
 
@@ -859,7 +961,7 @@ def main(config_path: str) -> None:
         speaking_tracker=speaking_tracker,
     )
     init_runner = _make_init_runner(cfg, store, gateway, embedder, lexicon_entries)
-    status_provider = _build_status_provider(cfg, store, gateway, stt_monitor)
+    status_provider = _build_status_provider(cfg, store, gateway, stt_monitor, engine=engine)
 
     try:
         from dmd.sources.browser import BrowserAudioSource

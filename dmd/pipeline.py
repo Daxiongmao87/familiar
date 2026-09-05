@@ -215,6 +215,33 @@ class SessionEngine:
         self._monitor: TranscriptMonitor | None = None
         self._stt_queue = _PerUserSttQueue(self._dispatch_utterance)
         self._intake_stats: dict[str, float] = {}
+        # Session controls (SPEC §15): pause-capture drops incoming audio;
+        # OOC keeps transcribing (the event log is the sole truth) but stops
+        # fast-lane triggers and proactive monitoring.
+        self._capture_paused = False
+        self._ooc = False
+
+    def set_capture_paused(self, paused: bool) -> dict[str, Any]:
+        """Pause/resume intake of audio into the pipeline; returns the state."""
+        self._capture_paused = bool(paused)
+        event = {"type": "capture_state", "paused": self._capture_paused, "t": time.time()}
+        self.on_event(event)
+        return event
+
+    def set_ooc(self, on: bool) -> dict[str, Any]:
+        """Toggle out-of-character mode; returns the state."""
+        self._ooc = bool(on)
+        event = {"type": "ooc_state", "on": self._ooc, "t": time.time()}
+        self.on_event(event)
+        return event
+
+    @property
+    def capture_paused(self) -> bool:
+        return self._capture_paused
+
+    @property
+    def ooc(self) -> bool:
+        return self._ooc
 
     def intake_stats(self) -> dict[str, float]:
         """Latency counters from the last consume_source run (§14 proof)."""
@@ -389,6 +416,11 @@ class SessionEngine:
 
         self._remember(u)
 
+        if self._ooc:
+            # Out-of-character: the line stays in the rolling transcript (the
+            # event log is the sole truth) but must not fire the fast lane.
+            return
+
         is_trigger, kind = await detect_trigger(self.gw, u.text)
         if not is_trigger:
             return
@@ -543,10 +575,16 @@ class SessionEngine:
     def start_monitor(self) -> None:
         if self._monitor is not None:
             return
+
+        def _monitor_transcript() -> str:
+            # OOC mode (SPEC §15): the proactive monitor stays silent —
+            # too short to pass the judge threshold.
+            return "" if self._ooc else self._transcript_text()
+
         self._monitor = TranscriptMonitor(
             self.gw,
             self.cfg.agent,
-            get_transcript=self._transcript_text,
+            get_transcript=_monitor_transcript,
             get_scene=self._scene_text,
             on_action=self._on_monitor_action,
         )
@@ -614,6 +652,14 @@ class SessionEngine:
             async for chunk in source:
                 t_work0 = time.monotonic()
                 user_id = chunk.user_id
+                if self._capture_paused:
+                    # Pause-capture (SPEC §15): audio is dropped, not buffered.
+                    # Any half-open VAD utterance is discarded so resume never
+                    # stitches speech across the pause boundary.
+                    buffers.pop(user_id, None)
+                    offsets.pop(user_id, None)
+                    segmenter.drop_user(user_id)
+                    continue
                 buf = buffers.setdefault(user_id, bytearray())
                 offsets.setdefault(user_id, 0)
                 buf.extend(chunk.samples)

@@ -20,11 +20,20 @@
       <span id="conn-dot" class="conn-dot off" data-testid="conn-dot" title="connection"></span>
       <button id="capture-toggle" class="capture-btn" data-testid="capture-toggle" type="button">● Capture</button>
       <span id="stt-health-status" class="stt-health-status" data-testid="stt-health-status" title="STT transcription health"></span>
+      <button id="pause-capture" class="ctl-btn" data-testid="pause-capture" type="button" title="Pause or resume audio capture">⏸ Pause</button>
+      <button id="ooc-toggle" class="ctl-btn" data-testid="ooc-toggle" type="button" title="Mark the session out-of-character: transcript keeps running, triggers and monitoring pause">OOC</button>
     </div>
   </header>
   <main class="grid">
     <section id="transcript-pane" class="pane transcript" aria-label="transcript"></section>
-    <section id="card-stream" class="pane cards" aria-label="cards"></section>
+    <section class="pane cards-col" aria-label="cards">
+      <div id="scene-pane" class="scene-pane" data-testid="scene-pane" aria-label="scene context"></div>
+      <div id="card-stream" class="cards" data-testid="card-stream" aria-label="active cards"></div>
+      <details id="done-area" class="done-area" data-testid="done-area">
+        <summary>Done · <span id="done-count" data-testid="done-count">0</span> set aside</summary>
+        <div id="done-stream" class="done-stream" data-testid="done-stream"></div>
+      </details>
+    </section>
   </main>
   <footer class="querybar">
     <input id="query-input" data-testid="query-input" type="text" placeholder="Ask the DM copilot..." autocomplete="off" spellcheck="false">
