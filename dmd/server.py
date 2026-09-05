@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import sys
 import time
@@ -291,13 +292,26 @@ def create_app(
         if run_init is None:
             return {"ok": False, "detail": "no init runner"}
 
-        async def _progress(stage: Any) -> None:
-            await bus.publish({"type": "init_progress", "stage": str(stage)})
+        def _progress(stage: Any) -> None:
+            # run_init's progress_cb is sync (see dmd.init_pass._cb): publishing
+            # through the sync bridge keeps an async cb from being fire-and-
+            # forgotten as an un-awaited coroutine.
+            bus.publish_sync({"type": "init_progress", "stage": str(stage)})
 
         async def _run() -> None:
             try:
-                await run_init(path, progress_cb=_progress)
+                result = await run_init(path, progress_cb=_progress)
+                bus.publish_sync(
+                    {
+                        "type": "init_progress",
+                        "stage": "done",
+                        "n_docs": int(getattr(result, "n_docs", 0) or 0),
+                        "n_chunks": int(getattr(result, "n_chunks", 0) or 0),
+                        "n_entities": int(getattr(result, "n_entities", 0) or 0),
+                    }
+                )
             except Exception as exc:
+                logging.getLogger(__name__).exception("init failed")
                 await bus.publish(
                     {
                         "type": "init_progress",
@@ -729,8 +743,18 @@ def _make_init_runner(
     store: Any,
     gateway: Any,
     embedder: Any,
-    lexicon_entries: Any,
+    engine: Any = None,
 ) -> Any:
+    """Build the /api/init runner over dmd.init_pass.run_init.
+
+    The init_pass signature is positional-named `project_path/cfg/store/gw/
+    embedder/progress_cb`; a mismatched keyword here once made every live
+    init die as an invisible TypeError inside a background task (found
+    2026-09-05: the shipped index stayed empty because of it). On success,
+    the live engine's lexicon is refreshed in place so a re-init takes effect
+    without a server restart.
+    """
+
     try:
         from dmd.init_pass import run_init as _run_init
 
@@ -738,17 +762,24 @@ def _make_init_runner(
             async def run_init(
                 self,
                 path: str,
-                progress_cb: Callable[[str], Awaitable[None]] | None = None,
-            ) -> dict[str, Any]:
-                return await _run_init(
-                    path=path,
+                progress_cb: Callable[[str], None] | None = None,
+            ) -> Any:
+                result = await _run_init(
+                    project_path=path,
                     cfg=cfg,
                     store=store,
-                    gateway=gateway,
+                    gw=gateway,
                     embedder=embedder,
-                    lexicon_entries=lexicon_entries,
                     progress_cb=progress_cb,
                 )
+                if engine is not None:
+                    refresh = getattr(engine, "refresh_lexicon", None)
+                    if callable(refresh):
+                        try:
+                            refresh(list(getattr(result, "lexicon", []) or []))
+                        except Exception:
+                            pass
+                return result
 
         return _Runner()
     except Exception:
@@ -974,7 +1005,7 @@ def main(config_path: str) -> None:
         db_dir=db_dir,
         speaking_tracker=speaking_tracker,
     )
-    init_runner = _make_init_runner(cfg, store, gateway, embedder, lexicon_entries)
+    init_runner = _make_init_runner(cfg, store, gateway, embedder, engine=engine)
     status_provider = _build_status_provider(cfg, store, gateway, stt_monitor, engine=engine)
 
     try:

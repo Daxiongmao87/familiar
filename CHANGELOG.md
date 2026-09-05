@@ -83,6 +83,22 @@
   Verification tooling; non-release-affecting.
 
 ### Fixed
+- **`/api/init` was dead on arrival (live defect, 2026-09-05).**
+  `_make_init_runner` in `dmd/server.py` called
+  `dmd.init_pass.run_init(project_path=…, gw=…)` with nonexistent keywords
+  (`path=`, `gateway=`, plus a `lexicon_entries=` parameter the function
+  never had), so every live init died as a `TypeError` inside an unwatched
+  background task — the running service had never indexed its campaign
+  (0 docs, 0 entities, empty lexicon). Also: the async `progress_cb` was
+  called synchronously by `_cb`, so no `init_progress` event ever reached
+  the bus. Now the runner matches the real signature, progress is published
+  through `EventBus.publish_sync`, the completion event carries the counts,
+  failures log a traceback, and a successful init hot-swaps the live
+  engine's lexicon via `SessionEngine.refresh_lexicon` (re-init takes effect
+  without a restart). Proven by
+  `tests/unit/test_server_init_wiring.py` (4 tests, red against the old
+  wiring) and live: docs 7 / entities 15 now indexed on :8760. Patch
+  (pre-1.0).
 - **LLM inference-slot leak (Priority 0 hotfix; production defect,
   2026-09-05).** `dmd/gateway.py` omitted `max_tokens` whenever the caller
   passed `None`, so llama.cpp ran with `n_predict=-1`; a repeating model

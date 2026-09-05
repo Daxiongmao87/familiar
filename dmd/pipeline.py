@@ -244,6 +244,17 @@ class SessionEngine:
     def ooc(self) -> bool:
         return self._ooc
 
+    def refresh_lexicon(self, entries: list[LexiconEntry]) -> dict[str, Any]:
+        """Hot-swap the lexicon after an init pass (no restart needed).
+
+        The STT hotword prompt and entity-linking both derive from the same
+        entries list; rebuilding them here is what makes a re-init take
+        effect on the live path immediately.
+        """
+        self.entries = entries
+        self._hotword_prompt = _lexicon_prompt(entries)
+        return {"entries": len(entries), "hotwords": len(self._hotword_prompt)}
+
     def intake_stats(self) -> dict[str, float]:
         """Latency counters from the last consume_source run (§14 proof)."""
         return dict(self._intake_stats)
