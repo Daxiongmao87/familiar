@@ -101,11 +101,22 @@ def _extract_json(text) -> dict[str, Any] | None:
     return hermes
 
 
+# Pattern assembled from fragments: literal XML tool-call tag sequences in
+# source files corrupt some OpenAI-compatible tool-calling layers (observed
+# 2026-09-05: three agent runs killed by 'Expected function.name to be a
+# string' after reading this file). Keep this region tag-literal-free.
+_TC_OPEN = "<" + "tool_call" + ">"
+_TC_CLOSE = "<" + "/tool_call" + ">"
 _XML_CALL_RE = re.compile(
-    r"<tool_call>\s*([A-Za-z_][\w.-]*)\s*(.*?)\s*</tool_call>", re.DOTALL
+    _TC_OPEN + r"\s*([A-Za-z_][\w.-]*)\s*(.*?)\s*" + _TC_CLOSE, re.DOTALL
 )
+_AK_OPEN = "<" + "arg_key" + ">"
+_AK_CLOSE = "<" + "/arg_key" + ">"
+_AV_OPEN = "<" + "arg_value" + ">"
+_AV_CLOSE = "<" + "/arg_value" + ">"
 _XML_ARGS_RE = re.compile(
-    r"<arg_key>\s*(.*?)\s*</arg_key>\s*<arg_value>\s*(.*?)\s*</arg_value>", re.DOTALL
+    _AK_OPEN + r"\s*(.*?)\s*" + _AK_CLOSE + r"\s*"
+    + _AV_OPEN + r"\s*(.*?)\s*" + _AV_CLOSE, re.DOTALL
 )
 
 
