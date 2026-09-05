@@ -52,7 +52,15 @@ class VoicePresence:
                     if hasattr(state, "value")
                     else bool(state)
                 )
-                self._tracker.on_speaking(str(getattr(member, "id", ssrc)), speaking)
+                uid = str(getattr(member, "id", ssrc))
+                name = str(
+                    getattr(member, "display_name", "")
+                    or getattr(member, "global_name", "")
+                    or ""
+                )
+                self._tracker.on_speaking(
+                    uid, speaking, name=name if name else None
+                )
             except Exception:
                 pass
 

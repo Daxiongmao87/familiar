@@ -15,6 +15,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from .agent import AgentResult, WorkerAgent
+from .attribution import AttributedSegment, attribute_segments, attribute_whole, group_by_speaker
 from .config import AppConfig
 from .embedder import Embedder
 from .index_store import IndexStore
@@ -181,6 +182,7 @@ class SessionEngine:
         tool_registry: Any | None = None,
         player_state: Any | None = None,
         world_map: str = "",
+        speaking_tracker: Any | None = None,
     ) -> None:
         self.cfg = cfg
         self.store = store
@@ -192,6 +194,7 @@ class SessionEngine:
         self.project_path = project_path
         self.tool_registry = tool_registry
         self.player_state = player_state
+        self.speaking_tracker = speaking_tracker
         self._recent: deque[Utterance] = deque(maxlen=30)
         self._hotword_prompt: str = _lexicon_prompt(entries)
         self._active_cards: dict[
@@ -273,8 +276,9 @@ class SessionEngine:
                 "t": t_done,
             }
         )
-        if produced is not None:
-            await self.handle_utterance(produced)
+        if produced:
+            for utt in produced:
+                await self.handle_utterance(utt)
 
     async def transcribe_pcm(
         self,
@@ -282,13 +286,21 @@ class SessionEngine:
         pcm: bytes,
         t_start: float,
         t_end: float,
-    ) -> Utterance | None:
+    ) -> list[Utterance]:
+        """STT one clipped utterance and attribute every emitted line.
+
+        §7a: when a SpeakingTracker is wired (live mixed capture), pyannote
+        segment windows are joined against gateway speaking windows so each
+        transcript line carries the *named* speaker's user_id instead of the
+        stream's anonymous ``browser_mixed`` label. Without a tracker (per-user
+        sources, replay tests) the source identity is kept verbatim.
+        """
         if not pcm:
-            return None
+            return []
         wav = _wav_bytes(pcm, sample_rate=self.cfg.stt_pipeline.sample_rate)
         prompt = self._hotword_prompt or None
         try:
-            raw = await self.gw.transcribe(wav, prompt=prompt)
+            raw, segments = await self._stt_with_segments(wav, prompt)
         except Exception as exc:
             self.on_event(
                 {
@@ -298,23 +310,73 @@ class SessionEngine:
                     "t": t_end,
                 }
             )
-            return None
-        corrected, _spans = correct_text(raw or "", self.entries)
-        self.on_event(
-            {
+            return []
+        groups = self._attribute(user_id, segments, raw or "", t_start, t_end)
+        utterances: list[Utterance] = []
+        for g in groups:
+            corrected, _spans = correct_text(g.text, self.entries)
+            if not corrected.strip():
+                continue
+            event: dict[str, Any] = {
                 "type": "transcript",
-                "user_id": user_id,
+                "user_id": g.user_id,
                 "text": corrected,
-                "t": t_end,
+                "t": g.t_end,
             }
-        )
-        return Utterance(
-            user_id=user_id,
-            text=corrected,
-            t_start=t_start,
-            t_end=t_end,
-            raw_text=raw or "",
-        )
+            if g.name:
+                event["name"] = g.name
+            self.on_event(event)
+            utterances.append(
+                Utterance(
+                    user_id=g.user_id,
+                    text=corrected,
+                    t_start=g.t_start,
+                    t_end=g.t_end,
+                    raw_text=g.text,
+                    name=g.name,
+                )
+            )
+        return utterances
+
+    async def _stt_with_segments(
+        self, wav: bytes, prompt: str | None
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """One STT call: (text, diarized segments); segments empty when the
+        gateway or config can't provide them."""
+        td = getattr(self.gw, "transcribe_diarized", None)
+        if callable(td) and getattr(self.cfg.models.stt, "diarize", False):
+            return await td(wav, prompt=prompt)
+        raw = await self.gw.transcribe(wav, prompt=prompt)
+        return raw, []
+
+    def _attribute(
+        self,
+        user_id: str,
+        segments: list[dict[str, Any]],
+        raw: str,
+        t_start: float,
+        t_end: float,
+    ) -> list[AttributedSegment]:
+        """Join diarized segments (or the whole window) with speaking events."""
+        tracker = self.speaking_tracker
+        if tracker is None:
+            return [
+                AttributedSegment(
+                    user_id=user_id, text=raw, t_start=t_start, t_end=t_end
+                )
+            ]
+        if segments:
+            groups = group_by_speaker(
+                attribute_segments(tracker, segments, t_start, user_id)
+            )
+            if groups:
+                return groups
+        uid, name = attribute_whole(tracker, t_start, t_end, user_id)
+        return [
+            AttributedSegment(
+                user_id=uid, text=raw, t_start=t_start, t_end=t_end, name=name
+            )
+        ]
 
     async def handle_utterance(self, u: Utterance) -> None:
         mentioned_pairs = link_entities(u.text, self.entries)
@@ -366,7 +428,9 @@ class SessionEngine:
         return "ephemeral"
 
     def _transcript_text(self) -> str:
-        return "\n".join(f"{u.user_id}: {u.text}" for u in self._recent)
+        return "\n".join(
+            f"{u.name or u.user_id}: {u.text}" for u in self._recent
+        )
 
     def _scene_text(self) -> str:
         return "\n".join(s.get("text", "") for s in self._scene_buffer if s.get("text"))

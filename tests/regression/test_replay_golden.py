@@ -216,8 +216,7 @@ async def test_full_replay_matches_golden(rig: Any, tmp_path: Path) -> None:
     silence = b"\x00\x00" * 320
 
     for user, t0 in (("dm", 0.0), ("alice", 1.0)):
-        u = await engine.transcribe_pcm(user, silence, t0, t0 + 1.0)
-        if u is not None:
+        for u in await engine.transcribe_pcm(user, silence, t0, t0 + 1.0):
             await engine.handle_utterance(u)
     await engine.manual_query("how do grappling rules work")
     await pool.drain()

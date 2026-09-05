@@ -143,6 +143,7 @@ def create_app(
     web_dir: str | Path | None = None,
     bus: EventBus | None = None,
     browser_source: Any = None,
+    speaking_tracker: Any = None,
 ) -> FastAPI:
     """Build the FastAPI app with optional injected dependencies.
 
@@ -164,6 +165,11 @@ def create_app(
     if browser_source is not None:
         try:
             app.state.browser_source = browser_source
+        except Exception:
+            pass
+    if speaking_tracker is not None:
+        try:
+            app.state.speaking_tracker = speaking_tracker
         except Exception:
             pass
 
@@ -191,8 +197,10 @@ def create_app(
                 from dmd.speaking_tracker import SpeakingTracker
                 from dmd.voice_presence import VoicePresence
 
-                tracker = SpeakingTracker()
-                app.state.speaking_tracker = tracker
+                tracker = getattr(app.state, "speaking_tracker", None)
+                if tracker is None:
+                    tracker = SpeakingTracker()
+                    app.state.speaking_tracker = tracker
                 presence = VoicePresence(
                     str(token), int(guild_id), int(dm_user_id), tracker
                 )
@@ -681,6 +689,7 @@ def _make_engine(
     pool: Any,
     bus: EventBus,
     db_dir: Any = None,
+    speaking_tracker: Any = None,
 ) -> Any:
     try:
         from dmd.pipeline import SessionEngine
@@ -731,6 +740,7 @@ def _make_engine(
             tool_registry=tool_registry,
             player_state=player_state,
             world_map=world_map,
+            speaking_tracker=speaking_tracker,
         )
         return engine
     except Exception:
@@ -830,8 +840,23 @@ def main(config_path: str) -> None:
                 lexicon_entries = []
 
     pool = _make_pool(cfg, bus)
+    speaking_tracker: Any = None
+    try:
+        from dmd.speaking_tracker import SpeakingTracker
+
+        speaking_tracker = SpeakingTracker()
+    except Exception:
+        speaking_tracker = None
     engine = _make_engine(
-        cfg, store, gateway, embedder, lexicon_entries, pool, bus, db_dir=db_dir
+        cfg,
+        store,
+        gateway,
+        embedder,
+        lexicon_entries,
+        pool,
+        bus,
+        db_dir=db_dir,
+        speaking_tracker=speaking_tracker,
     )
     init_runner = _make_init_runner(cfg, store, gateway, embedder, lexicon_entries)
     status_provider = _build_status_provider(cfg, store, gateway, stt_monitor)
@@ -850,6 +875,7 @@ def main(config_path: str) -> None:
         status_provider=status_provider,
         browser_source=browser_source,
         bus=bus,
+        speaking_tracker=speaking_tracker,
     )
 
     if browser_source is not None and engine is not None:

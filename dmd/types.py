@@ -27,6 +27,7 @@ class Utterance:
     t_start: float
     t_end: float
     raw_text: str | None = None  # pre-correction transcript if available
+    name: str | None = None  # display name from the speaking tracker (§7a)
 
 
 class Priority(int, Enum):
