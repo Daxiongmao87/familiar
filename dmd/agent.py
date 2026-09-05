@@ -225,8 +225,16 @@ class WorkerAgent:
         tier: str,
         trigger_portion: str = "",
         transcript: str = "",
+        staged_block: str = "",
     ) -> AgentResult:
-        """Run the agent loop for a task at the given tier."""
+        """Run the agent loop for a task at the given tier.
+
+        ``staged_block`` is optional advisory context pre-fetched ahead of this
+        turn ("Predictive RAG"): already-embedded excerpts for entities the
+        monitor predicted the conversation would need. It is a head start the
+        model may use or ignore; it never mutates state and an empty block
+        leaves the normal path unchanged.
+        """
         role = "synthesis" if tier == "card" else "fast"
         max_calls = (
             self.cfg.max_tool_calls
@@ -235,7 +243,7 @@ class WorkerAgent:
         )
         try:
             return await asyncio.wait_for(
-                self._loop(task, tier, role, trigger_portion, transcript, max_calls),
+                self._loop(task, tier, role, trigger_portion, transcript, max_calls, staged_block),
                 self.cfg.agent_timeout_s,
             )
         except asyncio.TimeoutError:
@@ -250,10 +258,11 @@ class WorkerAgent:
         trigger_portion: str,
         transcript: str,
         max_calls: int,
+        staged_block: str = "",
     ) -> AgentResult:
         messages = [
             {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": self._task_message(task, tier, trigger_portion, transcript)},
+            {"role": "user", "content": self._task_message(task, tier, trigger_portion, transcript, staged_block)},
         ]
         tool_calls = 0
         for _i in range(max_calls + 1):
@@ -325,7 +334,14 @@ class WorkerAgent:
         text = (parsed or {}).get("text") or _content_str(content).strip()[:400]
         return AgentResult(tier="ephemeral", text=text or "(no context produced)", tool_calls=tool_calls)
 
-    def _task_message(self, task: str, tier: str, trigger_portion: str, transcript: str) -> str:
+    def _task_message(
+        self,
+        task: str,
+        tier: str,
+        trigger_portion: str,
+        transcript: str,
+        staged_block: str = "",
+    ) -> str:
         parts = [f"TASK: {task}", "", f"TIER: {tier}"]
         if trigger_portion:
             parts += ["", "TRIGGERING TRANSCRIPT (what this answers):", trigger_portion]
@@ -334,6 +350,12 @@ class WorkerAgent:
             # whole rolling transcript on every loop call inflates context (and latency) unboundedly.
             _MAX_TRANSCRIPT = 4000
             parts += ["", "RECENT TRANSCRIPT:", transcript[-_MAX_TRANSCRIPT:]]
+        if staged_block:
+            # Advisory head start from the predictive-staging cache: already
+            # retrieved excerpts for entities the monitor predicted. The model
+            # may use them instead of (or before) calling retrieve.
+            parts += ["", "PRE-STAGED CONTEXT (advisory, retrieved ahead of this turn):", staged_block]
+        if transcript:
             parts += ["", "WORLD MAP:", self.world_map]
         return "\n".join(parts)
 

@@ -22,6 +22,7 @@ from .index_store import IndexStore
 from .lexicon import correct_text, link_entities
 from .monitor import TranscriptMonitor
 from .sources.base import AudioSource
+from .staging import StagedContext, prefetch_entity, render_staged_block
 from .triggers import detect_trigger
 from .types import Card, Job, LexiconEntry, Priority, Utterance
 from .vad import UtteranceSegmenter
@@ -221,6 +222,56 @@ class SessionEngine:
         # fast-lane triggers and proactive monitoring.
         self._capture_paused = False
         self._ooc = False
+
+        # Predictive-retrieval staging ("Predictive RAG", Priority-1 design):
+        # the monitor predicts likely-next entities; their excerpts are
+        # pre-fetched into a small RAM LRU so an actual turn can pull
+        # already-embedded context instead of paying retrieval latency inline.
+        # Advisory only — never mutates canonical state — and a miss is a
+        # no-op fallback, so these fields never affect correctness.
+        self._staging_cfg = getattr(cfg, "staging", None)
+        self._staged: StagedContext | None = (
+            StagedContext(
+                ttl_s=self._staging_cfg.ttl_s,
+                max_entries=self._staging_cfg.max_entries,
+            )
+            if self._staging_cfg is not None
+            and getattr(self._staging_cfg, "enabled", False)
+            else None
+        )
+        self._prefetch_tasks: set[asyncio.Task] = set()
+        self._prefetch_inflight = 0  # throttle bound for concurrent prefetches
+
+    def _staged_block(self, entities: list[str]) -> tuple[str, list[str]]:
+        """Render advisory staged excerpts for ``entities``.
+
+        Returns ``(block, matched)`` where ``block`` is "" (with ``matched``
+        empty) on any miss — a pure in-memory read, so a miss adds zero
+        latency and leaves the normal path byte-identical.
+        """
+        if self._staged is None or not entities:
+            return "", []
+        try:
+            excerpts, matched = self._staged.lookup(entities)
+        except Exception:
+            return "", []
+        if not excerpts:
+            return "", []
+        max_chars = (
+            int(getattr(self._staging_cfg, "max_inject_chars", 6000) or 6000)
+            if self._staging_cfg is not None
+            else 6000
+        )
+        return render_staged_block(excerpts, max_chars=max_chars), matched
+
+    def staging_stats(self) -> dict[str, Any]:
+        """Cache introspection for the session log (hits/misses/size/keys)."""
+        if self._staged is None:
+            return {"enabled": False}
+        snap = self._staged.snapshot()
+        snap["enabled"] = True
+        snap["prefetch_inflight"] = self._prefetch_inflight
+        return snap
 
     def set_capture_paused(self, paused: bool) -> dict[str, Any]:
         """Pause/resume intake of audio into the pipeline; returns the state."""
@@ -573,17 +624,29 @@ class SessionEngine:
         task = self._task_for_ctx(ctx)
         transcript = self._transcript_text()
         trigger_portion = ctx.get("utterance", "")
+        entities = ctx.get("entities", []) or []
+        # Predictive-staging injection: pull already-prefetched excerpts for the
+        # entities this turn mentions. Pure in-memory read — a miss adds zero
+        # latency and leaves the normal path byte-identical.
+        staged_block, staged_matched = self._staged_block(entities)
+        if staged_block:
+            logger.info(
+                "staged-inject entities=%s matched=%s chars=%d",
+                entities[:8],
+                staged_matched[:8],
+                len(staged_block),
+            )
         try:
             result = await self._agent.run(
                 task,
                 tier,
                 trigger_portion=trigger_portion,
                 transcript=transcript,
+                staged_block=staged_block,
             )
         except Exception as exc:
             result = AgentResult(tier=tier, error=f"{type(exc).__name__}: {exc}")
 
-        entities = ctx.get("entities", []) or []
         if tier == "card":
             c = result.card or {
                 "kind": "error",
@@ -592,6 +655,17 @@ class SessionEngine:
                 "player_ids": [],
                 "items": [],
             }
+            _meta: dict[str, Any] = {
+                "items": list(c.get("items", []) or []),
+                "entities": entities,
+                "tier": "card",
+                "tool_calls": result.tool_calls,
+                "error": result.error,
+            }
+            if staged_matched:
+                # Only present when a staged hit actually fed this card; an
+                # absent key keeps the common (unstaged) shape unchanged.
+                _meta["staged_for"] = staged_matched
             card = Card(
                 id=uuid.uuid4().hex[:12],
                 kind=str(c.get("kind", "info")),
@@ -600,13 +674,7 @@ class SessionEngine:
                 t_context=time.time(),
                 status="active",
                 player_ids=list(c.get("player_ids", []) or []),
-                meta={
-                    "items": list(c.get("items", []) or []),
-                    "entities": entities,
-                    "tier": "card",
-                    "tool_calls": result.tool_calls,
-                    "error": result.error,
-                },
+                meta=_meta,
             )
             self._active_cards[card.id] = card
             return card
@@ -662,6 +730,7 @@ class SessionEngine:
             get_transcript=_monitor_transcript,
             get_scene=self._scene_text,
             on_action=self._on_monitor_action,
+            on_predict=self._on_predict,
         )
         self._monitor.start()
 
@@ -669,6 +738,69 @@ class SessionEngine:
         if self._monitor is not None:
             self._monitor.stop()
             self._monitor = None
+
+    async def _on_predict(self, predicted: list[str]) -> None:
+        """Monitor verdict predictions -> background prefetch into the cache.
+
+        Never blocks the monitor cadence or the answer path: each entity is
+        prefetched on a tracked background task, bounded to at most two
+        concurrent embed+search runs, and every failure degrades to a no-op
+        miss (best-effort advisory only). OOC silences predictions exactly as
+        it silences the monitor's actions.
+        """
+        if self._staged is None or not predicted or self._ooc:
+            return
+        if self._prefetch_inflight >= 2:
+            return  # throttled; the next cadence tick will retry uncached keys
+        st_cfg = self._staging_cfg
+        cap = int(getattr(st_cfg, "max_predicted", 6) or 6) if st_cfg is not None else 6
+        k = int(getattr(st_cfg, "prefetch_k", 4) or 4) if st_cfg is not None else 4
+        self.on_event(
+            {
+                "type": "staging_predict",
+                "entities": predicted[:cap],
+                "t": time.time(),
+            }
+        )
+        queued = 0
+        for ent in predicted[:cap]:
+            if not ent.strip():
+                continue
+            if self._staged.has(ent):
+                continue
+            if self._prefetch_inflight >= 2:
+                break
+            queued += 1
+            self._schedule_prefetch(ent, k)
+        if queued:
+            logger.info("staging-predict entities=%d queued=%d", len(predicted), queued)
+
+    def _schedule_prefetch(self, entity: str, k: int) -> None:
+        """Fire one tracked, throttled background prefetch for ``entity``."""
+        self._prefetch_inflight += 1
+
+        async def _run() -> None:
+            try:
+                excerpts = await prefetch_entity(
+                    entity, self.embedder, self.store, self.gw, k=k
+                )
+            except Exception:
+                excerpts = []
+            finally:
+                self._prefetch_inflight -= 1
+            if excerpts and self._staged is not None:
+                self._staged.put(entity, excerpts)
+                logger.info(
+                    "staged-prefetch entity=%r excerpts=%d", entity, len(excerpts)
+                )
+
+        try:
+            task = asyncio.get_running_loop().create_task(_run())
+        except RuntimeError:
+            self._prefetch_inflight -= 1
+            return
+        self._prefetch_tasks.add(task)
+        task.add_done_callback(self._prefetch_tasks.discard)
 
     async def _on_monitor_action(self, verdict: dict) -> None:
         action = verdict.get("action")
@@ -795,6 +927,14 @@ class SessionEngine:
 
     async def aclose(self) -> None:
         """Tear down the per-user STT workers and drop any pending work (shutdown)."""
+        for task in list(self._prefetch_tasks):
+            task.cancel()
+        for task in list(self._prefetch_tasks):
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._prefetch_tasks.clear()
         await self._stt_queue.close()
         for task in list(self._pending_submits):
             task.cancel()

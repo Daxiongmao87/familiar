@@ -27,7 +27,15 @@ _MONITOR_SYSTEM = (
     "- action='card_done', card_id='<id>' when the transcript clearly shows a card's content is resolved.\n"
     "- action='none' when nothing needs attention.\n"
     "Default to action='none' unless something is clearly actionable. Do not invent "
-    "events that are not in the transcript."
+    "events that are not in the transcript.\n"
+    "Additionally, on EVERY tick, predict what the next beats will need (advisory "
+    "only — this never mutates anything):\n"
+    "- situation='<one-line summary of the current situation>';\n"
+    "- predicted_entities=['<canonical entity names likely to matter in the next 1-2 "
+    "beats>'] (characters, places, items, factions grounded in the transcript/scene; "
+    "at most 6; do not invent entities that are not present or clearly foreshadowed);\n"
+    "- likely_next_events=['<short phrase>'] (e.g. 'loot the corpse', 'death save', "
+    "'search the chapel altar')."
 )
 
 _MONITOR_SCHEMA: dict[str, Any] = {
@@ -38,11 +46,32 @@ _MONITOR_SCHEMA: dict[str, Any] = {
         "text": {"type": "string"},
         "card_id": {"type": "string"},
         "reason": {"type": "string"},
+        "situation": {"type": "string"},
+        "predicted_entities": {"type": "array", "items": {"type": "string"}},
+        "likely_next_events": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["action"],
 }
 
 _MIN_TRANSCRIPT_CHARS = 40
+
+# Defensive ceiling on how many predicted entities a single verdict may ask to
+# prefetch (the engine applies its own stricter StagingConfig.max_predicted).
+_MAX_PREDICTED = 12
+
+
+def _predicted_entities(result: dict[str, Any]) -> list[str]:
+    raw = result.get("predicted_entities")
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for ent in raw:
+        if not isinstance(ent, str):
+            continue
+        e = ent.strip()
+        if e and e not in out:
+            out.append(e)
+    return out[:_MAX_PREDICTED]
 
 
 def _parse(result: object) -> dict[str, Any] | None:
@@ -65,12 +94,14 @@ class TranscriptMonitor:
         get_scene: Callable[[], str],
         on_action: Callable[[dict[str, Any]], Awaitable[None]],
         cadence_s: float | None = None,
+        on_predict: Callable[[list[str]], Awaitable[None]] | None = None,
     ) -> None:
         self.gw = gw
         self.cfg = cfg
         self.get_transcript = get_transcript
         self.get_scene = get_scene
         self.on_action = on_action
+        self.on_predict = on_predict
         self.cadence = cadence_s if cadence_s is not None else getattr(cfg, "monitor_cadence_s", 30.0)
         self._task: asyncio.Task | None = None
         self._stopping = False
@@ -105,14 +136,29 @@ class TranscriptMonitor:
                 continue
 
     async def tick_once(self) -> None:
-        """One monitor pass: read context, judge, and act (via on_action)."""
+        """One monitor pass: read context, judge, and act (via on_action).
+
+        A verdict's ``predicted_entities`` are forwarded to ``on_predict`` on
+        EVERY tick that carries them (including ``action='none'``) — the
+        prediction is the staging trigger, independent of whether an alert is
+        warranted — so the engine can prefetch ahead of the next real turn.
+        """
         transcript = self.get_transcript() or ""
         if len(transcript.strip()) < _MIN_TRANSCRIPT_CHARS:
             return
         scene = self.get_scene() or ""
         verdict = await self._judge(transcript, scene)
         self.ticks += 1
-        if verdict and verdict.get("action") not in (None, "none"):
+        if not verdict:
+            return
+        predicted = _predicted_entities(verdict)
+        if predicted and self.on_predict is not None:
+            try:
+                await self.on_predict(predicted)
+            except Exception:
+                # A prefetch must never take the monitor (or session) down.
+                pass
+        if verdict.get("action") not in (None, "none"):
             await self.on_action(verdict)
 
     async def _judge(self, transcript: str, scene: str) -> dict[str, Any] | None:

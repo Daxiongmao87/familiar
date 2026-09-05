@@ -11,6 +11,28 @@
   files; no product behavior or contract change).
 
 ### Added
+- **Predictive-retrieval staging ("Predictive RAG", Priority-1 deliverable).**
+  Anticipate instead of react: the transcript monitor's judge now also emits
+  `situation` / `likely_next_events` / `predicted_entities` (fast role, capped
+  max_tokens), and every tick that carries predictions forwards them to the
+  engine even when `action='none'`. The engine prefetches each predicted
+  entity's campaign excerpts into a bounded RAM LRU (`dmd/staging.py`
+  `StagedContext`: TTL + `max_entries`, adopted and completed from the
+  interrupted prior run) on tracked, throttled background tasks (≤2 in
+  flight; never blocks monitor cadence or the answer path). When a real turn
+  arrives, `SessionEngine._generate_card` looks the trigger's mentioned
+  entities up against the cache (a pure in-memory read) and injects the hits
+  as an advisory `PRE-STAGED CONTEXT` block into the worker agent's task
+  message; a miss is a byte-identical no-op and never touches the embedder or
+  the store on the answer path. The card records `meta.staged_for` when a
+  staged hit fed it; every prediction is published as a `staging_predict`
+  event and prefetch/inject decisions are logged so precision is tunable.
+  Config: `StagingConfig` (enabled/ttl/max_entries/prefetch_k/max_predicted/
+  max_inject_chars) + `config.example.yaml`. Tests:
+  `tests/unit/test_staging.py` (11: cache LRU/TTL/counters/lookup-tagging,
+  block caps, monitor `on_predict` on `action='none'`, prediction →
+  prefetch → injection round trip with `staged_for` recorded, and cache-miss
+  provably non-blocking). Minor (pre-1.0).
 - **v2 agentic live path.** The live path is now workers that *do work* as it
   comes in, instead of a fixed embed→retrieve→synthesize pipeline:
   - `dmd/agent.py` — `WorkerAgent`: a bounded tool-looping agent (retrieve /
@@ -118,7 +140,7 @@
   Minor (pre-1.0; new additive REST endpoint + client replay for a live
   defect).
 
-### Fast-lane classifier dominated the transcript→answer budget (live defect,
+- **Fast-lane classifier dominated the transcript→answer budget (live defect,
   Priority-1 measurement, 2026-09-05).** `detect_trigger` asked the fast role
   (ling-3.0-tiny) for every utterance *before* the regex fallback. That
   endpoint is reasoning-first: a bare classification request emits ~180 hidden

@@ -53,6 +53,18 @@ stt_pipeline:
   min_utterance_ms: 400
   max_chunk_s: 25
 
+# Predictive-retrieval staging ("Predictive RAG"): the transcript monitor
+# predicts likely-next entities and their excerpts are pre-fetched into a small
+# RAM LRU so a real turn pulls already-embedded context (zero retrieval latency
+# on the answer path). Advisory only; a miss is a no-op fallback.
+staging:
+  enabled: true
+  ttl_s: 120.0                   # staged excerpts expire; re-fetch is cheap
+  max_entries: 32                # RAM LRU bound
+  prefetch_k: 4                  # excerpts stored per predicted entity
+  max_predicted: 6               # cap predictions prefetched per monitor tick
+  max_inject_chars: 6000         # ceiling on the injected staged block
+
 discord:
   token: ${DISCORD_TOKEN}
   guild_id: "000000000000000000"   # the server; Familiar follows the DM within it

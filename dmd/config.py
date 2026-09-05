@@ -147,6 +147,25 @@ class AgentConfig(BaseModel):
     # (detect_trigger yields loot/lore/rules/other); the rest go ephemeral.
 
 
+class StagingConfig(BaseModel):
+    """Predictive-retrieval staging ("Predictive RAG", Priority-1 design).
+
+    The transcript monitor predicts likely-next entities and their campaign
+    excerpts are pre-fetched into a small RAM LRU so an actual turn can pull
+    already-embedded context instead of paying retrieval latency inline. Staged
+    data is advisory only — it never mutates canonical state — and a miss is a
+    no-op fallback to the normal path, so these knobs only bound the cache and
+    the per-tick fleet budget, never correctness.
+    """
+
+    enabled: bool = True
+    ttl_s: float = 120.0  # staged excerpts expire; re-fetching is cheap
+    max_entries: int = 32  # RAM LRU bound (the memory guard for this cache)
+    prefetch_k: int = 4  # excerpts stored per predicted entity
+    max_predicted: int = 6  # cap predictions prefetched per monitor tick
+    max_inject_chars: int = 6000  # ceiling on the injected staged block
+
+
 class SttPipelineConfig(BaseModel):
     """STT chunking and VAD timing parameters."""
 
@@ -201,6 +220,7 @@ class AppConfig(BaseModel):
     orchestration: OrchestrationConfig = OrchestrationConfig()
     agent: AgentConfig = AgentConfig()
     stt_pipeline: SttPipelineConfig = SttPipelineConfig()
+    staging: StagingConfig = StagingConfig()
     discord: DiscordConfig = DiscordConfig()
     server: ServerConfig = ServerConfig()
 
