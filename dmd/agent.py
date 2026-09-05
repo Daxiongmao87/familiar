@@ -492,6 +492,50 @@ class WorkerAgent:
         query = str(args.get("query", "")).strip()
         if not query:
             return {"error": "web_search needs a 'query'"}
+        sc = getattr(self.cfg, "search", None)
+        if sc is not None and getattr(sc, "endpoint", ""):
+            try:
+                return await self._searxng_search(sc, query)
+            except Exception as e:
+                # SearXNG down (bundled instance stopped, restarting, etc.):
+                # degrade to the DDG scrape rather than failing the turn.
+                return await self._ddg_search(query, f"searxng unavailable: {type(e).__name__}")
+        return await self._ddg_search(query, None)
+
+    async def _searxng_search(self, sc: Any, query: str) -> Any:
+        """Search through the bundled SearXNG JSON API (project module)."""
+        headers = {}
+        if getattr(sc, "key", None):
+            headers["Authorization"] = f"Bearer {sc.key}"
+        params = {
+            "q": query,
+            "format": "json",
+            "language": getattr(sc, "language", "en") or "en",
+        }
+        client = self._get_http()
+        resp = await client.get(
+            f"{sc.endpoint.rstrip('/')}/search",
+            params=params,
+            headers=headers or None,
+            timeout=getattr(sc, "timeout_s", 10.0) or 10.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        results = data.get("results") or []
+        out = []
+        for r in results[:5]:
+            title = r.get("title", "")
+            url = r.get("url", "")
+            snippet = r.get("content", "") or r.get("snippet", "")
+            if not title and not url:
+                continue
+            out.append({"title": title, "url": url, "snippet": snippet})
+        if not out:
+            return {"results": [], "note": "searxng: no results"}
+        return {"results": out, "engine": "searxng"}
+
+    async def _ddg_search(self, query: str, degraded_note: str | None) -> Any:
+        """Legacy fallback: DuckDuckGo HTML scrape (rate-limit prone)."""
         url = "https://html.duckduckgo.com/html/?q=" + _urlquote(query)
         try:
             client = self._get_http()
@@ -502,7 +546,11 @@ class WorkerAgent:
         links = _ddg_links(resp.text)
         if not links:
             return {"results": [], "note": "no results (possibly offline)"}
-        return {"results": links[:5]}
+        out = {"results": links[:5], "engine": "duckduckgo"}
+        if degraded_note:
+            out["degraded"] = True
+            out["note"] = degraded_note
+        return out
 
     async def _tool_web_fetch(self, args: dict[str, Any]) -> Any:
         url = str(args.get("url", "")).strip()

@@ -130,6 +130,21 @@ class OrchestrationConfig(BaseModel):
     stale_after_s: float = 120.0
 
 
+class SearchConfig(BaseModel):
+    """Web-search provider for worker agents.
+
+    Default: the bundled SearXNG instance (project-owned module, run via
+    ``tools/searxng.sh``) on localhost. DDG HTML scraping stays as an
+    automatic fallback when SearXNG is unreachable, so a search outage
+    degrades rather than breaks the agent.
+    """
+
+    endpoint: str = "http://127.0.0.1:8888"  # bundled SearXNG JSON API
+    key: str | None = None  # SearXNG static token (empty = open localhost)
+    language: str = "en"
+    timeout_s: float = 10.0
+
+
 class AgentConfig(BaseModel):
     """Worker-agent and monitor tuning (v2 agentic layer)."""
 
@@ -150,6 +165,7 @@ class AgentConfig(BaseModel):
     ]
     # Fast-lane trigger kinds that map to the durable card tier
     # (detect_trigger yields loot/lore/rules/other); the rest go ephemeral.
+    search: SearchConfig = SearchConfig()
 
 
 class StagingConfig(BaseModel):

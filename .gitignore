@@ -13,6 +13,11 @@ screenshots/
 .cursor/
 .claude.json
 
+# Bundled SearXNG — source/venv/runtime are build artifacts
+.searxng-src/
+.searxng/
+.venv-searxng/
+
 # Local logs / captured video — ephemeral verification evidence
 *.log
 *.mp4
