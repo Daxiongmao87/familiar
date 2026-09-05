@@ -167,6 +167,35 @@ def _content_str(content: Any) -> str:
 # Worker agent
 # ---------------------------------------------------------------------------
 
+# Structured-output schema used when the model must commit to a final CARD.
+# Deliberately schema-only: DCs are plain integers supplied by the model per
+# scene, never baked rule constants (SPEC §2: no baked rules).
+_CARD_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "kind": {"type": "string", "enum": ["skill_table", "lore", "rules", "info", "npc", "location", "loot", "ruling", "transcript_notice"]},
+        "title": {"type": "string"},
+        "body_md": {"type": "string"},
+        "player_ids": {"type": "array", "items": {"type": "string"}},
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "quantity": {"type": "integer"},
+                    "dc_find": {"type": ["integer", "null"]},
+                    "notes": {"type": "string"},
+                },
+                "required": ["name"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["kind", "title", "body_md"],
+    "additionalProperties": False,
+}
+
 _SYSTEM_PROMPT = """You are a worker agent for a DM copilot. You do REAL work:
 you answer the DM's trigger and produce a verified output, using your tools.
 You do not guess; you look things up.
@@ -300,6 +329,10 @@ class WorkerAgent:
             # Final answer
             if tier == "card":
                 if not parsed.get("body_md") and not parsed.get("title"):
+                    # The model returned something that is not a usable card.
+                    # First nudge in prose; if it still won't shape up, re-ask
+                    # through the gateway's structured-output path so the card
+                    # is forced to validate against the card schema.
                     messages.append({"role": "assistant", "content": _content_str(content)})
                     messages.append(
                         {
@@ -307,10 +340,25 @@ class WorkerAgent:
                             "content": 'Respond with the final CARD JSON: {"kind","title","body_md","player_ids","items"}.',
                         }
                     )
-                    continue
+                    content = await self.gw.chat(
+                        role, messages, json_schema=_CARD_SCHEMA, temperature=0.2
+                    )
+                    parsed = _extract_json(content)
+                    if not (parsed or {}).get("body_md") and not (parsed or {}).get("title"):
+                        # Even structured output failed; salvage whatever JSON
+                        # came back so the DM still sees a card rather than
+                        # nothing (SPEC: cards arrive readable, never vanish).
+                        if parsed:
+                            return AgentResult(
+                                tier="card",
+                                card=self._normalize_card(parsed),
+                                tool_calls=tool_calls,
+                                error="structured card re-ask produced partial card",
+                            )
+                        continue
                 return AgentResult(
                     tier="card",
-                    card=self._normalize_card(parsed),
+                    card=self._normalize_card(parsed or {}),
                     tool_calls=tool_calls,
                 )
             # ephemeral tier
