@@ -28,11 +28,16 @@
   staged hit fed it; every prediction is published as a `staging_predict`
   event and prefetch/inject decisions are logged so precision is tunable.
   Config: `StagingConfig` (enabled/ttl/max_entries/prefetch_k/max_predicted/
-  max_inject_chars) + `config.example.yaml`. Tests:
+  max_inject_chars) + `config.example.yaml`. Live-verified wiring detail: the
+  prediction fields are **required** in the judge schema — probed against the
+  live fast role, a tiny model skips optional fields entirely (returns only
+  `action`) while schema-required fields are endpoint-enforced and always
+  emitted; optional predictions would mean staging never fires. Tests:
   `tests/unit/test_staging.py` (11: cache LRU/TTL/counters/lookup-tagging,
   block caps, monitor `on_predict` on `action='none'`, prediction →
-  prefetch → injection round trip with `staged_for` recorded, and cache-miss
-  provably non-blocking). Minor (pre-1.0).
+  prefetch → injection round trip with `staged_for` recorded, cache-miss
+  provably non-blocking, and the required-fields schema guard). Minor
+  (pre-1.0).
 - **v2 agentic live path.** The live path is now workers that *do work* as it
   comes in, instead of a fixed embed→retrieve→synthesize pipeline:
   - `dmd/agent.py` — `WorkerAgent`: a bounded tool-looping agent (retrieve /

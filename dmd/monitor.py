@@ -50,7 +50,18 @@ _MONITOR_SCHEMA: dict[str, Any] = {
         "predicted_entities": {"type": "array", "items": {"type": "string"}},
         "likely_next_events": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["action"],
+    # The prediction fields are REQUIRED, not optional: verified live on the
+    # configured fast role (ling-3.0-tiny) that a tiny model skips optional
+    # fields entirely (returns only action), while schema-required fields are
+    # enforced by the endpoint and always emitted — without this the staging
+    # prefetch would never fire. Defaults to empty arrays when nothing is
+    # predicted; the judge only ever forwards non-empty lists to on_predict.
+    "required": [
+        "action",
+        "situation",
+        "predicted_entities",
+        "likely_next_events",
+    ],
 }
 
 _MIN_TRANSCRIPT_CHARS = 40

@@ -145,6 +145,11 @@ def test_monitor_schema_and_system_carry_prediction_fields() -> None:
     props = _MONITOR_SCHEMA["properties"]
     assert "situation" in props and "predicted_entities" in props and "likely_next_events" in props
     assert "predicted_entities" in _MONITOR_SYSTEM and "situation=" in _MONITOR_SYSTEM
+    # Regression (verified live 2026-09-05): a tiny model skips optional schema
+    # fields, so the prediction fields must be REQUIRED or staging never fires.
+    assert {"action", "situation", "predicted_entities", "likely_next_events"} <= set(
+        _MONITOR_SCHEMA["required"]
+    )
 
 
 # -- engine round trip: prediction -> prefetch -> staging -> injection --------
