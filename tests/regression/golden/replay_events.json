@@ -6,6 +6,12 @@
     "user_id": "dm"
   },
   {
+    "t": 2.0,
+    "text": "never mind, rough luck there",
+    "type": "transcript",
+    "user_id": "alice"
+  },
+  {
     "card": {
       "body_md": "| Skill | DC |\n|---|---|\n| Investigation | 12 |\n| Perception | 14 |",
       "id": "card-0",
@@ -24,12 +30,6 @@
       "title": "Loot Table \u2014 Fallen Scout"
     },
     "type": "card"
-  },
-  {
-    "t": 2.0,
-    "text": "never mind, rough luck there",
-    "type": "transcript",
-    "user_id": "alice"
   },
   {
     "card": {

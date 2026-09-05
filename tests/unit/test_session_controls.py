@@ -296,3 +296,35 @@ def test_pool_drop_is_published_not_silent() -> None:
     assert out["result"] is None
     ev = out["event"]
     assert ev["type"] == "job_dropped" and ev["reason"] == "timeout" and ev["kind"] == "manual_query"
+
+
+async def test_manual_query_does_not_block_on_agent_run(tmp_path: Any) -> None:
+    """Live defect 2026-09-05: manual_query awaited the pool submit, so the
+    HTTP request hung for the full 60 s agent budget and the client timed
+    out. Submission must return once the job is queued."""
+    import asyncio
+
+    entered = asyncio.Event()
+
+    class _BlockingPool:
+        def __init__(self) -> None:
+            self.submitted = 0
+
+        async def submit(self, job: Any, work: Any) -> None:
+            self.submitted += 1
+            await asyncio.sleep(30)  # the agent run
+
+        async def drain(self) -> None:
+            return None
+
+    events: list[dict] = []
+    pool = _BlockingPool()
+    engine = _engine(tmp_path, _Gw(), pool, events)
+
+    t0 = time.monotonic()
+    await engine.manual_query("how do I rule a grapple?")
+    elapsed = time.monotonic() - t0
+
+    assert elapsed < 0.5, f"manual_query blocked {elapsed:.1f}s on the job"
+    assert pool.submitted == 1, "job was not queued before manual_query returned"
+    await engine.aclose()

@@ -205,3 +205,14 @@
   gateway data the fast path (`transcribe`) runs. Test:
   `tests/unit/test_pipeline_attribution.py::test_diarize_requested_only_when_tracker_has_windows`.
   Patch (pre-1.0).
+- **manual_query / trigger / monitor job submission no longer blocks its
+  caller.** `SessionEngine._submit_fire` schedules pool jobs as detached
+  tasks (with an entered-handshake so `pool.drain()` never races an
+  un-queued submit). Previously `POST /api/query` awaited the pool future,
+  so the HTTP request blocked for the whole agent run and the client hit a
+  read timeout while the card eventually arrived on the bus; and a trigger
+  found in one utterance delayed that user's next utterance by the full job.
+  Cards arrive via `card` events regardless. Regression:
+  `tests/unit/test_session_controls.py::test_manual_query_does_not_block_on_agent_run`.
+  The replay golden re-ordered accordingly (transcript #2 now precedes the
+  first card — reviewed diff, pure async-arrival reordering). Patch (pre-1.0).

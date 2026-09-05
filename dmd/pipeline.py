@@ -215,6 +215,7 @@ class SessionEngine:
         self._monitor: TranscriptMonitor | None = None
         self._stt_queue = _PerUserSttQueue(self._dispatch_utterance)
         self._intake_stats: dict[str, float] = {}
+        self._pending_submits: set[asyncio.Task] = set()
         # Session controls (SPEC §15): pause-capture drops incoming audio;
         # OOC keeps transcribing (the event log is the sole truth) but stops
         # fast-lane triggers and proactive monitoring.
@@ -429,6 +430,28 @@ class SessionEngine:
             )
         ]
 
+    async def _submit_fire(self, job: Job, work: Callable[[], Awaitable[Any]]) -> None:
+        """Schedule a pool job without blocking the caller on its completion.
+
+        Cards arrive through the event bus; the caller (an HTTP query handler
+        or a per-user STT worker) must not sit waiting on a 60-second agent
+        run. The `entered` handshake guarantees the job is queued before this
+        returns, so ``pool.drain()`` callers never race an un-started submit.
+        """
+        entered = asyncio.Event()
+
+        async def _go() -> None:
+            entered.set()
+            try:
+                await self.pool.submit(job, work)
+            except Exception as exc:  # noqa: BLE001 - job failure is not the submitter's
+                logger.warning("pool job %s failed: %s", job.kind, exc)
+
+        task = asyncio.get_running_loop().create_task(_go())
+        self._pending_submits.add(task)
+        task.add_done_callback(self._pending_submits.discard)
+        await entered.wait()
+
     async def handle_utterance(self, u: Utterance) -> None:
         mentioned_pairs = link_entities(u.text, self.entries)
         seen: set[str] = set()
@@ -460,7 +483,7 @@ class SessionEngine:
         async def _work() -> Card:
             return await self._generate_card(ctx)
 
-        await self.pool.submit(job, _work)
+        await self._submit_fire(job, _work)
 
     async def manual_query(self, text: str) -> None:
         ctx = {
@@ -474,7 +497,7 @@ class SessionEngine:
         async def _work() -> Card:
             return await self._generate_card(ctx)
 
-        await self.pool.submit(job, _work)
+        await self._submit_fire(job, _work)
 
     # -- tier routing ------------------------------------------------------
     def _tier_for_kind(self, kind: str) -> str:
@@ -643,7 +666,7 @@ class SessionEngine:
                 async def _work() -> Card | None:
                     return await self._generate_card(ctx)
 
-                await self.pool.submit(job, _work)
+                await self._submit_fire(job, _work)
             else:
                 self._emit_scene(verdict.get("text", ""), "monitor")
 
@@ -745,3 +768,6 @@ class SessionEngine:
     async def aclose(self) -> None:
         """Tear down the per-user STT workers and drop any pending work (shutdown)."""
         await self._stt_queue.close()
+        for task in list(self._pending_submits):
+            task.cancel()
+        self._pending_submits.clear()
