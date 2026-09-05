@@ -21,7 +21,7 @@ Method: every clause checked against the actual code in this working tree
 | # | SPEC section | Clause(s) | Status | Evidence / what's missing |
 |---|---|---|---|---|
 | 1 | §1 Purpose | local web app; Discord voice; transcribe **each speaker**; cards + ephemeral scene context | IMPLEMENTED | `server.py`, `pipeline.py`, `web/` exist; per-speaker identity on the mixed capture is recovered by the §7a attribution join (named `transcript` events), not degraded to `browser_mixed`. |
-| 2 | §2 Core principles | agentic-not-pipelined; **no baked rules**; live/responsive; local-first DM-only; **zero hardcoding**; DM spends no steps; start simple | IMPLEMENTED | Zero-hardcoding correction landed: whisperx `diarize`/`align` are config (`dmd/config.py` `SttRole.diarize/align`, read in `dmd/gateway.py` `_transcribe`), proven by `tests/unit/test_gateway.py::test_whisperx_params_reflect_config_diarize_align`. "No baked rules" satisfied (no SRD embedded). |
+| 2 | §2 Core principles | agentic-not-pipelined; **no baked rules**; live/responsive; local-first DM-only; **zero hardcoding**; DM spends no steps; start simple | IMPLEMENTED (OPEN: `align=false`) | Zero-hardcoding correction landed: whisperx `diarize`/`align` are config (`dmd/config.py` `SttRole.diarize/align`, read in `dmd/gateway.py:196-197`), proven by `tests/unit/test_gateway.py::test_whisperx_params_reflect_config_diarize_align`. `diarize=true` feeds pyannote segments to §7a (matches whisperx default). **OPEN: `align` is `False` (`dmd/config.py:98`)** — whisperx word-level timestamps are never requested (the only un-requested whisperx param); this stays OPEN until either word timestamps are consumed or the owner accepts the tradeoff. "No baked rules" satisfied (no SRD embedded). |
 | 3 | §3 Two phases | init (once) vs live (during session) | IMPLEMENTED | `init_pass.py` builds world map; `pipeline.py` `SessionEngine` is the live path. |
 | 4 | §4 Voice input | DAVE E2EE mandatory; per-user RTP keyed SSRC; crosstalk caveat; per-user concurrent; pluggable STT; lexicon | IMPLEMENTED (identity via §7a; DAVE per-user RTP deferred by design §17) | STT present (`gw.transcribe`), lexicon present (`lexicon.py`), per-user VAD buffers + worker queue (`pipeline.py:_PerUserSttQueue`). Per-user identity now recovered on the mixed capture by the §7a join (`dmd/attribution.py`; `SessionEngine.transcribe_pcm` emits named speakers) — `tests/unit/test_pipeline_attribution.py`. The SSRC/DAVE clause stays Phase 0, deferred by design (owner-ordered), not silently skipped. |
 | 5 | §5 Init agent → world map | structure, entities, tools (probed), players, context; embeddings local; **no baked rules** | IMPLEMENTED | `scanner.py` builds map-ish structure/entities; `tools_reg.py` probed tools. "No baked rules" audited and pinned: `tests/unit/test_no_baked_rules.py` (static guard — no dice notation / DC / AC / rule-table constants in any shipped `dmd/` or `web/` source; passes clean). Players seeding covered by `tests/unit/test_player_state.py` (§11). |
@@ -29,7 +29,7 @@ Method: every clause checked against the actual code in this working tree
 | 7 | §7 Triggering | explicit query; fast-lane gate; transcript monitor | IMPLEMENTED | `triggers.py` `detect_trigger`; `api_query`; `monitor.py` `TranscriptMonitor` cadence. |
 | 7a | §7-attribution | **per-speaker attribution** of diarized segments (DAVE PR #3139 design) | IMPLEMENTED | The join is wired: `dmd/attribution.py` (`attribute_segments` maps pyannote clip-relative windows through the utterance's monotonic start and picks the max-overlap SpeakingTracker window; `group_by_speaker` splits crosstalk; `attribute_whole` is the no-segments fallback). `SpeakingTracker` (`dmd/speaking_tracker.py`) feeds it from gateway events (`dmd/voice_presence.py`), and the tracker is created in `server.py:main()` and injected into `SessionEngine` (constructor `speaking_tracker`); `transcribe_pcm` publishes named `transcript` events. Tests: `tests/unit/test_attribution.py` (7), `tests/unit/test_pipeline_attribution.py` (5). |
 | 8 | §8 Two tiers | ephemeral RAG (same agent refines); cards (model-bound synthesis) | IMPLEMENTED | `pipeline.py` agentic-RAG fast tier + card synthesis. |
-| 9 | §9 Cards | player_ids assoc; pre-generated expand-on-click; lifecycle active→done; **set-aside done area** | IMPLEMENTED | `player_ids` + `status` now flow through `server.py:_card_to_dict` to the UI; `web/app.js` renders player badges (named via `/api/players`), cards collapse/expand on head click (pre-generated content, nothing loads on click), a Done button POSTs `/api/card/done` → `SessionEngine.mark_card_done` → `card_done` event moves the card to the set-aside `<details>` done area (viewable, never deleted). Monitor auto-mark (AI heard it resolved) uses the same lifecycle. Proven: `tests/unit/test_session_controls.py` (endpoint + lifecycle) and the rendered-capture audit (`screenshots/v1-v6`, DOM checks E1-E8). |
+| 9 | §9 Cards | player_ids assoc; pre-generated expand-on-click; lifecycle active→done; **set-aside done area** | IMPLEMENTED | `player_ids` + `status` flow through `server.py:_card_to_dict` to the UI; `web/app.js` renders player badges (named via `/api/players`); **fresh cards render expanded/readable** (title+body visible; collapsed only after Done — the collapsed-by-default presentation defect is fixed, see session log), a Done button POSTs `/api/card/done` → `SessionEngine.mark_card_done` → `card_done` event moves the card to the set-aside done area (auto-opened, viewable via title click, never deleted). `GET /api/cards` is now the REST view of the same store (newest-first, active + done) and the UI replays it on WS connect (id-deduped), so a freshly-loaded window is never empty. Live proof: a manual-query `skill_table` card reached a `/ws` subscriber in 12.5 s and `GET /api/cards`; DOM audit 1280/380 px. Monitor auto-mark uses the same lifecycle. Tests: `tests/unit/test_session_controls.py` (endpoint + lifecycle + cards endpoint), `tests/unit/test_staging.py`; rendered-capture audit (`screenshots/d1-d4_*`). |
 | 10 | §10 Ephemeral scene context | separate stream; auto-pop; decays | IMPLEMENTED | `_scene_buffer` + monitor decay on the backend; now also **rendered**: `web/index.html#scene-pane` (separate strip above the card stream), auto-pop latest-first, fades at 45 s and drops at 90 s (`app.js addSceneNote`), max 8 notes. |
 | 11 | §11 Per-player state store | SQLite seeded at init; updated on mark-done / AI-observed | IMPLEMENTED | `player_state.py` + `server.py:_seed_players` (seeds from `characters/*.md`, frontmatter titles) + `pipeline.py` mark-done and monitor `card_done` paths both write through `record_card_done` (done_cards ref + inventory merge, append-only, idempotent). Proven by `tests/unit/test_player_state.py` (6 tests), which also pinned a real re-seed bug: `seed()` clobbered live HP because empty-string hp defeated `COALESCE` (fixed: empty hp → NULL). |
 | 12 | §12 Model gateway | role-based, zero-hardcoding, startup probe | IMPLEMENTED | `gateway.py` role-resolve + `probe_all` (`/v1/models` + extra_body probe). Every chat call is generation-capped (`max_tokens` guard, 2026-09-05 slot-leak hotfix). |
@@ -51,6 +51,12 @@ Method: every clause checked against the actual code in this working tree
 - **ABSENT (owner-verified defects):** none remaining open — the three ABSENT
   defects (§4 identity, §7-attribution, §14 inline-await) closed in the
   2026-09-05 handoff session; see ledger rows for evidence.
+
+## Open items
+
+| Spec section | Item | Current state | Why OPEN |
+|---|---|---|---|
+| §2 / gateway.py | `diarize`/`align` params to whisperx | `diarize=true` (fed to §7a), `align=false` (`dmd/config.py:98`; emitted `align="false"` in `dmd/gateway.py:197`) | `align=false` is a **known open limitation**: whisperx word-level timestamps are never requested. Kept OPEN per owner until either the word timestamps are consumed downstream or the tradeoff is formally accepted. `diarize=true` is deliberately configured and verified (not open). |
 
 ## Session log (2026-09-05 handoff)
 
@@ -78,6 +84,60 @@ Closures since the audit, with the concrete blocker resolved or superseded:
   generated from the repo at runtime), plus the new
   `tests/unit/test_no_baked_rules.py` static guard.
 - **§15 / §9 / §11** — see ledger rows for current status.
+
+### Card surfacing (owner directive, 2026-09-05 ~15:50)
+
+Owner-verified live defect: the DM sees zero cards in the live UI. Root
+causes, all closed in this session:
+
+- **§9/§15 presentation (collapsed-by-default).** `web/app.js:buildCard` put
+  `collapsed` on every NEW card and `.card.collapsed .card-body` is
+  `display:none`, so cards arrived hidden — contradicting SPEC §1/§2/§8/§9
+  ("read, expand if long, mark done"). Fixed: fresh cards render expanded with
+  title + body; only Done (set-aside) cards are collapsed. The Done
+  transition's double-bound click toggle (two listeners → title clicks were a
+  no-op) and the `doneArea.open = doneArea.open` no-op (done cards vanished
+  into a closed `<details>`) are also fixed (title click re-expands; area
+  auto-opens).
+- **§9 REST view + replay were absent.** There was no `GET /api/cards` (route
+  404'd) and the WS bus only pushes post-connect events, so a freshly-loaded /
+  reconnected DM window stayed empty. Added `GET /api/cards` (newest-first,
+  active + done, same store as mark-done) and the UI fetches it on WS connect,
+  id-deduped against live pushes.
+- **§9/§7 evidence.** Ledger row §9 and §15 now include live proof: on the
+  running HTTPS service a real manual query produced a `skill_table` card that
+  reached a `/ws` subscriber in 12.5 s and appears in `GET /api/cards`; DOM
+  audit at 1280 px and 380 px (fresh card expanded/readable, done card
+  collapsed+is-done in the open done area, done-title re-expands) —
+  `screenshots/d1-d4_*` (ephemeral). Unit proof:
+  `tests/unit/test_session_controls.py` (cards endpoint newest-first,
+  empty-without-engine).
+
+### Predictive staging (Priority-1 "Predictive RAG", owner directive step 3)
+
+- **Priority-1 deliverable wired.** `dmd/staging.py` `StagedContext`
+  (LRU + TTL, adopted from the interrupted run) + `StagingConfig` are now
+  consumed end to end: the monitor judge (`dmd/monitor.py`) emits
+  `situation`/`likely_next_events`/`predicted_entities` and forwards
+  predictions to the engine on every tick (even `action='none'`); the engine
+  prefetches predicted entities into the bounded cache on throttled background
+  tasks (`dmd/pipeline.py` `_on_predict`/`_schedule_prefetch`) and injects
+  cache hits as an advisory `PRE-STAGED CONTEXT` block into the worker agent
+  (`WorkerAgent.run(..., staged_block=...)`). Cards record `meta.staged_for`
+  on a staged hit; `staging_predict` events + logs make precision tunable.
+  Guardrail-proven by `tests/unit/test_staging.py` (11 tests): a cache miss is
+  a pure in-memory read that never touches the embedder/store and leaves the
+  answer path byte-identical; staged data never mutates canonical state.
+- **§14 note.** Staging removes retrieval from the answer critical path when
+  the prediction hits; it does not change the already-measured intake/STT
+  budget. Measured live this session (owner directive step 2, honest numbers):
+  whisperx decode on this host was 6.7-12.0 s (diarize on) for the 2-13 s
+  probe utterances and the synthesis model took 12.5 s (successful manual
+  query) to ~45 s (2 of 3 back-to-back probe agents hit `agent budget
+  exhausted`); the card events themselves reached `/ws` and `/api/cards`
+  (see §9/§15 row). The P1 targets were met earlier today under warm
+  conditions; the floor now is whisperx decode + model latency on the shared
+  local endpoints, not pipeline structure.
 
 ## Open questions for the owner (answered by the handoff brief)
 
