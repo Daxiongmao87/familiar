@@ -300,13 +300,21 @@ class WorkerAgent:
                 hunt = await self._tool_web_search({"query": task[:240]})
                 results = hunt.get("results") or []
                 if results:
-                    lines = [
-                        f"- {r.get('title','')} | {r.get('url','')}"
-                        for r in results[:3]
-                    ]
+                    lines = []
+                    for r in results[:3]:
+                        title = r.get("title", "")
+                        url = r.get("url", "")
+                        content = (r.get("content") or r.get("snippet") or "").strip()
+                        if content:
+                            # Give the model the ACTUAL rule text from the
+                            # source so it can write the ruling from evidence,
+                            # not from memory (owner directive 2026-09-05).
+                            lines.append(f"- {title} ({url}): {content[:500]}")
+                        else:
+                            lines.append(f"- {title} ({url})")
                     grounding_block = (
-                        "RULE SOURCE SEARCH RESULTS (grounding only — do NOT "
-                        "quote these in the card):\n" + "\n".join(lines)
+                        "RULE SOURCE SEARCH RESULTS — write the ruling FROM "
+                        "this source text; do not invent rules:\n" + "\n".join(lines)
                     )
                     grounding_calls = 1
             except Exception:
