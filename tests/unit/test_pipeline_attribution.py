@@ -81,6 +81,9 @@ async def test_diarized_segments_become_named_speaker_lines() -> None:
     events: list[dict] = []
     gw = _DiarGw("I search the body careful with the trap", segments)
     engine = _engine(gw, _tracker(), events)
+    # diarize is OFF by default now (owner decision 2026-09-05 — dead on the
+    # mixed stream); this test pins the legacy segment-join path explicitly.
+    engine.cfg.models.stt.diarize = True
 
     utts = await engine.transcribe_pcm(SOURCE_ID, b"\x01\x02" * 100, 10.0, 16.0)
 
