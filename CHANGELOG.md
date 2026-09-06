@@ -119,6 +119,15 @@
   Verification tooling; non-release-affecting.
 
 ### Fixed
+- **Streaming-dialect batch safety-net routes to whisperx (`98dd875` follow-on).**
+  The `streaming` STT dialect keeps the whisperx HTTP server (:8123) as the batch
+  safety net, but only its `/transcribe` + `/health` routes exist there (the
+  streaming server on :43007 is raw TCP, no HTTP routes). `dmd/gateway.py`
+  `transcribe` and `stt_health` now treat
+  `dialect in ("whisperx", "streaming")` identically, so the streaming
+  live-path's batch fallback hits the real whisperx route instead of the OpenAI
+  `/v1/audio/transcriptions` one. Tests: `tests/unit/test_gateway.py` (12,
+  green). Patch (pre-1.0).
 - **Cards never surfaced in the live UI (owner-verified defect, 2026-09-05).**
   Three compounding causes, all fixed:
   (1) **Collapsed-by-default presentation** — `web/app.js:buildCard` added

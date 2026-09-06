@@ -187,7 +187,9 @@ class Gateway:
         ep = self._resolve("stt")
         if not ep.base_url:
             raise GatewayError("stt role has no base_url")
-        if getattr(ep, "dialect", "openai") == "whisperx":
+        # "streaming" dialect keeps the whisperx HTTP server (:8123) as the
+        # batch safety net; only its /transcribe route exists there.
+        if getattr(ep, "dialect", "openai") in ("whisperx", "streaming"):
             wurl = ep.base_url.rstrip("/") + "/transcribe"
             # diarize/align come from config, never hardcoded (SPEC §2).
             r = await self._client.post(
@@ -245,7 +247,9 @@ class Gateway:
         ep = self._resolve("stt")
         if not ep.base_url:
             return False, "no STT base_url configured"
-        if getattr(ep, "dialect", "openai") == "whisperx":
+        # "streaming" dialect keeps the whisperx HTTP server (:8123) as the
+        # batch safety net; only its /transcribe route exists there.
+        if getattr(ep, "dialect", "openai") in ("whisperx", "streaming"):
             url = ep.base_url.rstrip("/") + "/health"
         else:
             url = ep.base_url.rstrip("/") + "/v1/models"
