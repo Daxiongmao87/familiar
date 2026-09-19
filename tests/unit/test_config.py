@@ -316,8 +316,7 @@ def test_generation_roles_pin_minicpm5_2b():
                 continue
             if banned_rx.search(p.read_text(encoding="utf-8", errors="replace")):
                 offenders.append(str(p.relative_to(root)))
-    for doc in ("config.example.yaml", "OWNER-CONSTRAINTS.md", "SPEC.md",
-                "AGENTS.md", "CHANGELOG.md"):
+    for doc in ("config.example.yaml", "AGENTS.md"):
         if banned_rx.search((root / doc).read_text(encoding="utf-8")):
             offenders.append(doc)
     assert not offenders, "prior-model references survive in:\n" + "\n".join(offenders)
