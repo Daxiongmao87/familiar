@@ -89,10 +89,8 @@ def _rules_card_json() -> dict[str, Any]:
 
 
 class FakeGateway:
-    def __init__(self, stt_script: list[str] | None = None) -> None:
+    def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
-        self._stt_script = list(stt_script or [])
-        self.stt_calls = 0
 
     @property
     def cfg(self) -> Any:
@@ -139,12 +137,6 @@ class FakeGateway:
             return '{"tool": "web_search", "args": {"query": "5e grapple rules"}}'
         return _loot_card_json()
 
-    async def transcribe(self, audio_bytes: bytes, **kw: Any) -> str:
-        self.stt_calls += 1
-        if self._stt_script:
-            return self._stt_script.pop(0)
-        raise AssertionError("STT script exhausted")
-
     async def aclose(self) -> None:
         pass
 
@@ -166,7 +158,7 @@ async def rig(tmp_path: Path):
                     "api_key": "k",
                     "model_id": "fake-synthesis",
                 },
-                "stt": {"base_url": "http://fake.invalid/v1"},
+                "stt": {},
                 "embeddings": {"provider": "local", "model_id": "hash8"},
             },
             # Hermetic: the worker's rules-task pre-grounding must NOT hit a
@@ -177,12 +169,7 @@ async def rig(tmp_path: Path):
     )
 
     store = IndexStore(str(tmp_path / "index.db"))
-    gw = FakeGateway(
-        stt_script=[
-            "I search the body",
-            "never mind, rough luck there",
-        ]
-    )
+    gw = FakeGateway()
     embedder = HashEmbedder()
 
     result = await run_init(str(campaign), cfg, store, gw, embedder)
@@ -222,6 +209,12 @@ def _normalize(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
             ev["t"] = 0.0
             ev["detect_ms"] = 0.0
             ev["lane_ms"] = 0.0
+        if ev.get("type") == "stt_latency":
+            # Same: the golden pins that a streaming measurement exists per
+            # final (path/user), not its wall-clock timing.
+            ev["t"] = 0.0
+            ev["stt_ms"] = 0.0
+            ev["post_speech_ms"] = 0.0
         if ev.get("type") == "card":
             card = ev["card"]
             card["id"] = f"card-{card_n}"
@@ -237,11 +230,11 @@ def _normalize(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 async def test_full_replay_matches_golden(rig: Any, tmp_path: Path) -> None:
     engine, pool, events, _gw = rig
-    silence = b"\x00\x00" * 320
 
-    for user, t0 in (("dm", 0.0), ("alice", 1.0)):
-        for u in await engine.transcribe_pcm(user, silence, t0, t0 + 1.0):
-            await engine.handle_utterance(u)
+    # Streaming finals are the only transcript entry: each final carries
+    # its own text (no batch STT script stands between audio and words).
+    await engine._on_stream_final("dm", "I search the body", 0.0, 1.0)
+    await engine._on_stream_final("alice", "never mind, rough luck there", 1.0, 2.0)
     await engine.manual_query("how do grappling rules work")
     await pool.drain()
 
@@ -265,9 +258,8 @@ async def test_full_replay_matches_golden(rig: Any, tmp_path: Path) -> None:
 
 async def test_non_trigger_utterance_produces_no_card(rig: Any) -> None:
     engine, pool, events, _ = rig
-    silence = b"\x00\x00" * 320
     n_cards_before = sum(1 for e in events if e["type"] == "card")
-    await engine.transcribe_pcm("bob", silence, 3.0, 4.0)
+    await engine._on_stream_final("bob", "never mind, rough luck there", 3.0, 4.0)
     await pool.drain()
     n_cards_after = sum(1 for e in events if e["type"] == "card")
     assert n_cards_after == n_cards_before

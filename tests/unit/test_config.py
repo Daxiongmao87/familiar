@@ -35,8 +35,8 @@ def test_load_config_dict_happy_path_all_roles():
                 "model_id": "vision-1",
             },
             "stt": {
-                "base_url": "http://localhost:8081/v1",
-                "api_key": "literal-key",
+                "stream_host": "192.168.0.5",
+                "stream_port": 43007,
             },
             "embeddings": {
                 "provider": "endpoint",
@@ -56,7 +56,8 @@ def test_load_config_dict_happy_path_all_roles():
     assert cfg.models.vision is not None
     assert cfg.models.vision.enabled is True
     assert cfg.models.vision.model_id == "vision-1"
-    assert cfg.models.stt.base_url == "http://localhost:8081/v1"
+    assert cfg.models.stt.stream_host == "192.168.0.5"
+    assert cfg.models.stt.stream_port == 43007
     assert cfg.models.embeddings.provider == "endpoint"
     assert cfg.models.embeddings.model_id == "bge-small"
 
@@ -75,7 +76,7 @@ def test_env_var_expansion_success(monkeypatch):
                 "model_id": "m",
                 "api_key": "${DMD_TEST_KEY}",
             },
-            "stt": {"base_url": "http://s"},
+            "stt": {},
         }
     })
     assert cfg.models.synthesis.api_key == "expanded-secret-42"
@@ -91,7 +92,7 @@ def test_env_var_expansion_in_nested_extra_body(monkeypatch):
                 "model_id": "m",
                 "extra_body": {"tag": "${DMD_NESTED}", "list": ["${DMD_NESTED}", "plain"]},
             },
-            "stt": {"base_url": "http://s"},
+            "stt": {},
         }
     })
     assert cfg.models.synthesis.extra_body == {
@@ -111,7 +112,7 @@ def test_env_var_expansion_missing_raises(monkeypatch):
                     "model_id": "m",
                     "api_key": "${DMD_DEFINITELY_NOT_SET}",
                 },
-                "stt": {"base_url": "http://s"},
+                "stt": {},
             }
         })
 
@@ -125,7 +126,7 @@ def test_missing_synthesis_role_raises():
     with pytest.raises(ConfigError):
         load_config_dict({
             "models": {
-                "stt": {"base_url": "http://s"},
+                "stt": {},
             }
         })
 
@@ -139,7 +140,7 @@ def test_defaults_orchestration_max_concurrent_is_three():
     cfg = load_config_dict({
         "models": {
             "synthesis": {"base_url": "http://x", "model_id": "m"},
-            "stt": {"base_url": "http://s"},
+            "stt": {},
         }
     })
     assert cfg.orchestration.max_concurrent == 3
@@ -155,7 +156,7 @@ def test_defaults_embeddings_provider_local():
     cfg = load_config_dict({
         "models": {
             "synthesis": {"base_url": "http://x", "model_id": "m"},
-            "stt": {"base_url": "http://s"},
+            "stt": {},
         }
     })
     assert cfg.models.embeddings.provider == "local"
@@ -168,9 +169,11 @@ def test_defaults_stt_pipeline_and_project():
     cfg = load_config_dict({
         "models": {
             "synthesis": {"base_url": "http://x", "model_id": "m"},
-            "stt": {"base_url": "http://s"},
+            "stt": {},
         }
     })
+    assert cfg.models.stt.stream_host == "127.0.0.1"
+    assert cfg.models.stt.stream_port == 43007
     assert cfg.stt_pipeline.sample_rate == 16000
     # VAD endpoint hangover default (tuned low for the 5s voice->transcript
     # budget; see dmd/config.py SttPipelineConfig).
@@ -199,11 +202,12 @@ def test_extra_body_passthrough_preserved():
                 "model_id": "m",
                 "extra_body": payload,
             },
-            "stt": {"base_url": "http://s", "extra_body": {"lang": "en"}},
+            "stt": {},
         }
     })
     assert cfg.models.synthesis.extra_body == payload
-    assert cfg.models.stt.extra_body == {"lang": "en"}
+    # STT is streaming-only: no HTTP endpoint shape (no extra_body).
+    assert not hasattr(cfg.models.stt, "extra_body")
 
 
 def test_extra_body_defaults_to_empty_dict_when_omitted():
@@ -211,11 +215,11 @@ def test_extra_body_defaults_to_empty_dict_when_omitted():
     cfg = load_config_dict({
         "models": {
             "synthesis": {"base_url": "http://x", "model_id": "m"},
-            "stt": {"base_url": "http://s"},
+            "stt": {},
         }
     })
     assert cfg.models.synthesis.extra_body == {}
-    assert cfg.models.stt.extra_body == {}
+    assert not hasattr(cfg.models.stt, "extra_body")
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +248,7 @@ def test_load_config_dict_missing_synthesis_via_file_raises(tmp_path):
     cfg_file.write_text(
         "models:\n"
         "  stt:\n"
-        "    base_url: http://s\n",
+        "    stream_host: 127.0.0.1\n",
         encoding="utf-8",
     )
     with pytest.raises(ConfigError):
@@ -264,11 +268,12 @@ def test_api_key_none_explicit_tolerated():
                 "model_id": "m",
                 "api_key": None,
             },
-            "stt": {"base_url": "http://s", "api_key": None},
+            "stt": {},
         }
     })
     assert cfg.models.synthesis.api_key is None
-    assert cfg.models.stt.api_key is None
+    # The streaming protocol carries no auth: STT has no api_key at all.
+    assert not hasattr(cfg.models.stt, "api_key")
 
 
 def test_api_key_omitted_defaults_to_none():
@@ -276,11 +281,11 @@ def test_api_key_omitted_defaults_to_none():
     cfg = load_config_dict({
         "models": {
             "synthesis": {"base_url": "http://x", "model_id": "m"},
-            "stt": {"base_url": "http://s"},
+            "stt": {},
         }
     })
     assert cfg.models.synthesis.api_key is None
-    assert cfg.models.stt.api_key is None
+    assert not hasattr(cfg.models.stt, "api_key")
 
 
 # ---------------------------------------------------------------------------

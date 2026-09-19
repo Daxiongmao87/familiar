@@ -94,12 +94,10 @@
             </div>
           </div>
           <div class="model-role">
-            <h3>STT (transcription)</h3>
+            <h3>STT (streaming server)</h3>
             <div class="field-grid">
-              <div class="field"><label>Base URL</label><input id="cfg-stt-base" data-testid="cfg-stt-base" type="text"></div>
-              <div class="field"><label>Dialect</label><select id="cfg-stt-dialect" data-testid="cfg-stt-dialect"><option value="openai">openai</option><option value="whisperx">whisperx</option></select></div>
-              <div class="field"><label>API key</label><input id="cfg-stt-key" data-testid="cfg-stt-key" type="password" autocomplete="off" placeholder="blank = keep current"></div>
-              <div class="field wide"><label>Extra body (JSON)</label><textarea id="cfg-stt-extra" data-testid="cfg-stt-extra" rows="2" spellcheck="false"></textarea></div>
+              <div class="field"><label>Stream host</label><input id="cfg-stt-host" data-testid="cfg-stt-host" type="text" placeholder="127.0.0.1"></div>
+              <div class="field"><label>Stream port</label><input id="cfg-stt-port" data-testid="cfg-stt-port" type="number" placeholder="43007"></div>
             </div>
           </div>
           <div class="model-role">

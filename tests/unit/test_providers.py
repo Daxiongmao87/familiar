@@ -39,7 +39,7 @@ def _cfg(synth_provider: str = "remote", jev_provider: str = "remote") -> Any:
                     "extra_body": {"enable_thinking": False},
                     "max_tokens": 512,
                 },
-                "stt": {"base_url": "http://stt", "dialect": "openai"},
+                "stt": {},
             },
             "openjev": {
                 "enabled": True,
@@ -61,7 +61,7 @@ def test_defaults_are_remote_and_byte_identical() -> None:
         {
             "models": {
                 "synthesis": {"base_url": REMOTE_SYNTH, "model_id": "m"},
-                "stt": {"base_url": "http://stt"},
+                "stt": {},
             },
         }
     )

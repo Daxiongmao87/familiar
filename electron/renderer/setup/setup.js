@@ -183,9 +183,8 @@
       document.querySelector(`input[name="sttmode"][value="${stt.mode || 'local'}"]`).checked = true;
     }
     if (stt.mode === 'remote' || (v && !v.ok)) {
-      $('in-stt-dialect').value = stt.dialect || 'openai';
-      $('in-stt-base').value = stt.base_url || '';
-      $('in-stt-key').placeholder = stt.has_api_key ? 'configured — blank = keep' : 'blank = none';
+      $('in-stt-host').value = stt.stream_host || '';
+      $('in-stt-port').value = stt.stream_port || '43007';
     }
     syncSttFields();
   }
@@ -217,9 +216,8 @@
     const sttMode = document.querySelector('input[name="sttmode"]:checked').value;
     out.stt = { mode: sttMode };
     if (sttMode === 'remote') {
-      out.stt.dialect = $('in-stt-dialect').value;
-      out.stt.base_url = val('in-stt-base');
-      if ($('in-stt-key').value !== '') out.stt.api_key = $('in-stt-key').value;
+      out.stt.stream_host = val('in-stt-host');
+      out.stt.stream_port = val('in-stt-port');
     }
     return out;
   }

@@ -50,6 +50,10 @@ class StreamingSttAdapter:
     ``is_final`` response is drained first with a short timeout.
     """
 
+    # Minimum seconds between reconnect attempts per user while the server
+    # is unreachable (streaming is the only STT path — no batch fallback).
+    RETRY_S = 2.0
+
     def __init__(
         self,
         host: str = "127.0.0.1",
@@ -71,14 +75,16 @@ class StreamingSttAdapter:
         # fired), so this only reaps idle sockets between turns.
         self.idle_close_s = idle_close_s
         self._sessions: dict[str, _UserStream] = {}
+        self._last_fail: dict[str, float] = {}
 
     async def feed(self, user_id: str, pcm16: bytes) -> bool:
         """Append PCM for a user; opens a stream lazily on first bytes.
 
         Never raises: a streaming outage must not stall audio intake. A
-        failed session is dropped and reopened on the next audio. Returns
-        True when a live session holds the user's audio (callers use this
-        to decide whether the batch fallback must cover the utterance).
+        failed session is dropped and reopened on later audio, at most
+        once per ``RETRY_S`` per user so a dead server costs one cheap
+        refused connect every couple of seconds instead of one per chunk.
+        Returns True when a live session holds the user's audio.
         """
         now = time.monotonic()
         stale = [
@@ -90,12 +96,16 @@ class StreamingSttAdapter:
             await self.close_user(uid)
         sess = self._sessions.get(user_id)
         if sess is None:
+            if now - self._last_fail.get(user_id, 0.0) < self.RETRY_S:
+                return False
             sess = _UserStream(user_id, self)
             try:
                 await sess.start()
             except OSError:
                 self._sessions.pop(user_id, None)
+                self._last_fail[user_id] = now
                 return False
+            self._last_fail.pop(user_id, None)
             self._sessions[user_id] = sess
         await sess.push(pcm16)
         return not sess._closed
@@ -288,11 +298,22 @@ class _UserStream:
             text = msg.get("text", "")
             if not text:
                 continue
+            # Same audio-clock mapping as the pump loop so drain-path
+            # latency telemetry stays honest (t_end := now would zero it).
+            a_end = msg.get("end")
+            a_start = msg.get("start")
+            if isinstance(a_start, (int, float)):
+                self._seg_start = self._t0 + float(a_start)
+            t_end = (
+                self._t0 + float(a_end)
+                if isinstance(a_end, (int, float))
+                else time.monotonic()
+            )
             self._acc = (self._acc + text).strip()
             if msg.get("is_final"):
                 whole = self._acc
                 self._acc = ""
-                await self._fire_final(whole, self._seg_start, time.monotonic())
+                await self._fire_final(whole, self._seg_start, t_end)
                 return
 
     async def _die(self) -> None:

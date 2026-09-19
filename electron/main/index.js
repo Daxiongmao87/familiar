@@ -35,7 +35,7 @@ const ctx = {
   manifest: null, layoutMod: null, dirs: null, state: null,
   backend: null, hardware: null, cuda: null, hwVerdict: null, forcedRemote: [],
   installLog: [],
-  providers: { synthesis: 'remote', jev: 'remote', stt: 'remote' },
+  providers: { synthesis: 'remote', jev: 'remote', stt: 'local' },
 };
 
 function repoRoot() {

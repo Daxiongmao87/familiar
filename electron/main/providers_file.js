@@ -22,11 +22,16 @@ function synthesisBlock(modelsSection) {
   return roleBlock(modelsSection, 'synthesis');
 }
 
+/** @private Loopback hosts mean the provisioned local STT server. */
+function isLoopbackStt(host) {
+  return host === '' || host === '127.0.0.1' || host === 'localhost' || host === '::1';
+}
+
 /**
  * Read provider modes + STT mode from a config file.
  * @param {string} configPath path to familiar-config.yaml.
  * @returns {{synthesis:string, jev:string, stt:string}} stt is local|remote
- *   (local ⇔ streaming dialect, served by the provisioned STT server).
+ *   (local ⇔ stream_host is loopback, served by the provisioned server).
  */
 function scanProviders(configPath) {
   const out = { synthesis: 'remote', jev: 'remote', stt: 'remote' };
@@ -38,7 +43,12 @@ function scanProviders(configPath) {
   const openjev = sectionOf(text, 'openjev');
   const mJev = openjev && /provider:\s*(local|remote)/.exec(openjev);
   if (mJev) out.jev = mJev[1];
-  out.stt = !!models && /dialect:\s*streaming/.test(models) ? 'local' : 'remote';
+  // Missing models section: corrupt layout, stay on safe remote. A missing
+  // stt block or host key means the backend default (loopback → local).
+  if (models) {
+    const host = scalarOf(roleBlock(models, 'stt'), 'stream_host');
+    out.stt = isLoopbackStt(host) ? 'local' : 'remote';
+  }
   return out;
 }
 
@@ -55,15 +65,15 @@ function readText(configPath) {
  * Secrets are never returned — keys/token surface as booleans only.
  * @param {string} configPath path to familiar-config.yaml.
  * @returns {{synthesis:{base_url:string,model_id:string,has_api_key:boolean},
- *            jev:{base_url:string}, stt:{mode:string,dialect:string,
- *            base_url:string,has_api_key:boolean},
+ *            jev:{base_url:string}, stt:{mode:string,stream_host:string,
+ *            stream_port:string},
  *            discord:{has_token:boolean,guild_id:string,dm_user_id:string}}}
  */
 function scanSetup(configPath) {
   const out = {
     synthesis: { base_url: '', model_id: '', has_api_key: false },
     jev: { base_url: '' },
-    stt: { mode: 'remote', dialect: 'openai', base_url: '', has_api_key: false },
+    stt: { mode: 'local', stream_host: '127.0.0.1', stream_port: '43007' },
     discord: { has_token: false, guild_id: '', dm_user_id: '' },
   };
   const text = readText(configPath);
@@ -76,11 +86,11 @@ function scanSetup(configPath) {
   const openjev = sectionOf(text, 'openjev') || '';
   out.jev.base_url = scalarOf(openjev, 'base_url');
   const sttBlock = roleBlock(models, 'stt');
-  const dialect = scalarOf(sttBlock, 'dialect') || 'openai';
-  out.stt.dialect = dialect;
-  out.stt.mode = dialect === 'streaming' ? 'local' : 'remote';
-  out.stt.base_url = scalarOf(sttBlock, 'base_url');
-  out.stt.has_api_key = secretSet(sttBlock, 'api_key');
+  const streamHost = scalarOf(sttBlock, 'stream_host') || '127.0.0.1';
+  const streamPort = scalarOf(sttBlock, 'stream_port') || '43007';
+  out.stt.stream_host = streamHost;
+  out.stt.stream_port = streamPort;
+  out.stt.mode = isLoopbackStt(streamHost) ? 'local' : 'remote';
   const discord = sectionOf(text, 'discord') || '';
   out.discord.has_token = secretSet(discord, 'token');
   out.discord.guild_id = scalarOf(discord, 'guild_id');
@@ -259,25 +269,16 @@ function writeSetupConfig(configPath, setup) {
     const r = s.stt;
     if (typeof r !== 'object') throw new Error('stt must be an object');
     if (r.mode !== 'local' && r.mode !== 'remote') throw new Error('stt.mode invalid');
-    if (r.mode === 'local') {
-      text = setKey(text, { section: 'models', role: 'stt', indent: '    ',
-        key: 'dialect', value: 'streaming' });
-    } else {
-      const dialect = r.dialect || 'openai';
-      if (!['openai', 'whisperx'].includes(dialect)) throw new Error('stt dialect invalid');
-      text = setKey(text, { section: 'models', role: 'stt', indent: '    ',
-        key: 'dialect', value: dialect });
-      if (r.base_url !== undefined && r.base_url !== '') {
-        assertUrl(r.base_url, 'STT base URL');
-        text = setKey(text, { section: 'models', role: 'stt', indent: '    ',
-          key: 'base_url', value: r.base_url.replace(/\/+$/, '') });
-      }
-      if (r.api_key !== undefined && r.api_key !== null && r.api_key !== '') {
-        assertNonEmpty(r.api_key, 'STT API key');
-        text = setKey(text, { section: 'models', role: 'stt', indent: '    ',
-          key: 'api_key', value: r.api_key });
-      }
-    }
+    // Streaming-only: local points at the provisioned sidecar, remote at
+    // a user-supplied whisper_online_server host:port. No dialects, no key.
+    const host = r.mode === 'local' ? '127.0.0.1' : r.stream_host;
+    const port = r.mode === 'local' ? '43007' : r.stream_port;
+    assertNonEmpty(host, 'STT stream host');
+    assertPort(port, 'STT stream port');
+    text = setKey(text, { section: 'models', role: 'stt', indent: '    ',
+      key: 'stream_host', value: String(host).trim() });
+    text = setKey(text, { section: 'models', role: 'stt', indent: '    ',
+      key: 'stream_port', value: String(port).trim() });
   }
   fs.writeFileSync(configPath, text, 'utf-8');
   try {
@@ -294,6 +295,13 @@ function assertUrl(value, label) {
 function assertNonEmpty(value, label) {
   if (typeof value !== 'string' || value.trim() === '') {
     throw new Error(`${label} must be a non-empty string`);
+  }
+}
+
+function assertPort(value, label) {
+  const n = Number(typeof value === 'string' ? value.trim() : value);
+  if (!Number.isInteger(n) || n < 1 || n > 65535) {
+    throw new Error(`${label} must be a port 1-65535`);
   }
 }
 

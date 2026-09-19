@@ -65,10 +65,14 @@ function validateSaveSetup(setup, providers, saved, hwVerdict, sttMustBeRemote) 
   need(jevRemote, (setup.jevRemote || {}).base_url,
     saved.jev.base_url, 'JEV base URL');
   if (sttMustBeRemote && stt.mode !== 'remote') {
-    throw new Error('this machine cannot run the local STT server: choose a remote STT endpoint');
+    throw new Error('this machine cannot run the local STT server: choose a remote STT server');
   }
   if (stt.mode === 'remote') {
-    need(true, stt.base_url, saved.stt.base_url, 'STT base URL');
+    // A saved loopback host is the local default — it cannot satisfy remote.
+    const savedHost = saved.stt.stream_host || '';
+    const savedRemote = ['127.0.0.1', 'localhost', '::1'].includes(savedHost) ? '' : savedHost;
+    need(true, stt.stream_host, savedRemote, 'STT stream host');
+    need(true, stt.stream_port, saved.stt.stream_port, 'STT stream port');
   }
   if (stt.mode === 'local' && hwVerdict && !hwVerdict.sttLocal.ok) {
     throw new Error(`local STT unavailable: ${hwVerdict.sttLocal.reason}`);

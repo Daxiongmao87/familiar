@@ -80,8 +80,6 @@ class Gateway:
             if v is None or not v.enabled or not v.base_url:
                 raise GatewayError("vision role not enabled or not configured")
             return cast(EndpointConfig, v)
-        if role == "stt":
-            return m.stt
         raise GatewayError(f"unknown role: {role!r}")
 
     @staticmethod
@@ -162,122 +160,28 @@ class Gateway:
                 return content
         return content
 
-    async def transcribe(
-        self,
-        audio_bytes: bytes,
-        *,
-        filename: str = "chunk.wav",
-        prompt: str | None = None,
-        extra: dict | None = None,
-    ) -> str:
-        text, _segments = await self._transcribe(
-            audio_bytes, filename=filename, prompt=prompt, extra=extra
-        )
-        return text
-
-    async def transcribe_diarized(
-        self,
-        audio_bytes: bytes,
-        *,
-        filename: str = "chunk.wav",
-        prompt: str | None = None,
-        extra: dict | None = None,
-    ) -> tuple[str, list[dict[str, Any]]]:
-        """Transcribe and return ``(text, segments)`` for §7a attribution.
-
-        Segments are ``{"speaker", "start", "end", "text"}`` with start/end in
-        audio-relative seconds. The whisperx dialect yields speaker-labeled
-        segments when ``models.stt.diarize`` is true; the openai dialect
-        exposes no segment shape, so it returns an empty list.
-        """
-        return await self._transcribe(
-            audio_bytes, filename=filename, prompt=prompt, extra=extra
-        )
-
-    async def _transcribe(
-        self,
-        audio_bytes: bytes,
-        *,
-        filename: str,
-        prompt: str | None,
-        extra: dict | None,
-    ) -> tuple[str, list[dict[str, Any]]]:
-        ep = self._resolve("stt")
-        if not ep.base_url:
-            raise GatewayError("stt role has no base_url")
-        # "streaming" dialect keeps the whisperx HTTP server (:8123) as the
-        # batch safety net; only its /transcribe route exists there.
-        if getattr(ep, "dialect", "openai") in ("whisperx", "streaming"):
-            wurl = ep.base_url.rstrip("/") + "/transcribe"
-            # diarize/align come from config, never hardcoded (SPEC §2).
-            r = await self._client.post(
-                wurl,
-                params={
-                    "diarize": "true" if ep.diarize else "false",
-                    "align": "true" if ep.align else "false",
-                },
-                content=audio_bytes,
-                headers={"Content-Type": "audio/wav", **self._auth_headers(ep)},
-            )
-            if r.status_code != 200:
-                raise GatewayError(f"stt http {r.status_code}: {r.text[:200]}")
-            data = r.json()
-            segments = [
-                {
-                    "speaker": seg.get("speaker"),
-                    "start": float(seg.get("start", 0.0) or 0.0),
-                    "end": float(seg.get("end", 0.0) or 0.0),
-                    "text": (seg.get("text") or "").strip(),
-                }
-                for seg in data.get("segments", [])
-                if isinstance(seg, dict)
-            ]
-            text = data.get("text") or ""
-            if not text.strip():
-                text = " ".join(s["text"] for s in segments if s["text"])
-            return text.strip(), segments
-        url = ep.base_url.rstrip("/") + "/audio/transcriptions"
-        files = {"file": (filename, audio_bytes, "audio/wav")}
-        form: dict[str, str] = {}
-        if prompt is not None:
-            form["prompt"] = prompt
-        if extra:
-            for k, v in extra.items():
-                form[k] = str(v)
-        for k, v in ep.extra_body.items():
-            form[k] = str(v)
-        r = await self._client.post(
-            url, files=files, data=form, headers=self._auth_headers(ep)
-        )
-        if r.status_code != 200:
-            raise GatewayError(f"stt http {r.status_code}: {r.text[:200]}")
-        data = r.json()
-        return (data.get("text") or "").strip(), []
-
     async def stt_health(self) -> tuple[bool, str]:
-        """Probe the configured STT endpoint reachability.
+        """Probe the streaming STT server reachability (TCP connect).
 
         Returns ``(reachable, detail)``. ``reachable is False`` means the UI
         must treat transcription as unavailable (degraded mode), which is the
         difference between "nobody is talking" and "transcription is dead".
-        Uses a short per-request timeout so a dead endpoint can't stall callers.
+        Uses a short timeout so a dead server can't stall callers.
         """
-        ep = self._resolve("stt")
-        if not ep.base_url:
-            return False, "no STT base_url configured"
-        # "streaming" dialect keeps the whisperx HTTP server (:8123) as the
-        # batch safety net; only its /transcribe route exists there.
-        if getattr(ep, "dialect", "openai") in ("whisperx", "streaming"):
-            url = ep.base_url.rstrip("/") + "/health"
-        else:
-            url = ep.base_url.rstrip("/") + "/v1/models"
+        from .streaming_stt import probe_server
+
+        stt = self._cfg.models.stt
+        host = getattr(stt, "stream_host", "")
+        port = int(getattr(stt, "stream_port", 0) or 0)
+        if not host or not port:
+            return False, "no STT stream_host/stream_port configured"
         try:
-            r = await self._client.get(url, headers=self._auth_headers(ep), timeout=3.0)
-        except httpx.HTTPError as exc:
+            ok = await probe_server(host, port)
+        except Exception as exc:  # noqa: BLE001 - probe must never raise
             return False, f"{type(exc).__name__}: {exc}"
-        if r.status_code < 500:
-            return True, f"http {r.status_code}"
-        return False, f"http {r.status_code}"
+        if ok:
+            return True, f"tcp {host}:{port} ok"
+        return False, f"tcp {host}:{port} refused"
 
     async def embed(self, texts: list[str]) -> np.ndarray:
         emb = self._cfg.models.embeddings
@@ -305,7 +209,6 @@ class Gateway:
             roles.append(("fast", m.fast))
         if m.vision is not None and m.vision.enabled and m.vision.base_url:
             roles.append(("vision", cast(EndpointConfig, m.vision)))
-        roles.append(("stt", m.stt))
 
         for name, ep in roles:
             if not ep.base_url:
@@ -329,7 +232,7 @@ class Gateway:
                 results[f"{name}.model"] = (
                     "ok" if ep.model_id in ids else "missing_model"
                 )
-            if name != "stt" and ep.extra_body and ep.model_id:
+            if ep.extra_body and ep.model_id:
                 body: dict[str, Any] = {
                     "model": ep.model_id,
                     "messages": [{"role": "user", "content": "ping"}],

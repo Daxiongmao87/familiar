@@ -1,147 +1,173 @@
-"""Streaming STT wiring: finals dispatch through the shared tail, partials
-publish as ephemeral events, and batch twins are deduped (2026-09-05).
+"""Streaming STT: adapter protocol, reconnect backoff, and final dispatch.
 
-Requires the SimulStreaming server on 127.0.0.1:43007 (see
-~/streaming-stt) — skipped automatically when it is not listening.
+All tests drive a fake in-process TCP server speaking the SimulStreaming
+protocol (raw s16le PCM in, newline-JSON partials/finals out) — no live
+server required.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import wave
-
-import pytest
+from typing import Any
 
 from dmd.config import load_config_dict
 from dmd.pipeline import SessionEngine
-from dmd.streaming_stt import probe_server
-from dmd.types import PcmChunk
+from dmd.streaming_stt import StreamingSttAdapter, probe_server
 
 SR = 16000
-WAV = "/tmp/opencode/live_utt_16k.wav"
 
 
-class FakeGw:
-    """Batch stub: never transcribes (dedup must drop the twin anyway)."""
+def _final(text: str) -> dict:
+    return {"text": text, "start": 0.0, "end": 0.5, "is_final": True}
 
-    def __init__(self) -> None:
-        self.calls = 0
 
-    async def transcribe(self, audio_bytes: bytes, **kw) -> str:
-        self.calls += 1
-        await asyncio.sleep(0.05)
-        return "I search the goblin corpse for loot"
+def _partial(text: str) -> dict:
+    return {"text": text, "start": 0.0, "end": 0.2, "is_final": False}
 
 
 class NoPool:
-    async def submit(self, job, work) -> None:
+    async def submit(self, job: Any, work: Any) -> None:
         return None
 
     async def drain(self) -> None:
         return None
 
 
-def _engine(tmp_path) -> SessionEngine:
+def _engine(port: int, tmp_path: Any, on_event: Any) -> SessionEngine:
     cfg = load_config_dict(
         {
             "project": {"path": str(tmp_path)},
             "models": {
                 "synthesis": {"base_url": "http://fake.invalid", "model_id": "f"},
-                "stt": {
-                    "base_url": "http://127.0.0.1:8123",
-                    "dialect": "streaming",
-                    "stream_host": "127.0.0.1",
-                    "stream_port": 43007,
-                },
+                "stt": {"stream_host": "127.0.0.1", "stream_port": port},
             },
-            "stt_pipeline": {"silence_ms": 500, "min_utterance_ms": 40},
         }
     )
     return SessionEngine(
         cfg=cfg,
         store=None,
-        gw=FakeGw(),
+        gw=object(),
         entries=[],
         embedder=None,
         pool=NoPool(),
-        on_event=lambda e: events.append(e),
+        on_event=on_event,
         project_path=str(tmp_path),
     )
 
 
-events: list[dict] = []
+async def test_streaming_final_dispatches_through_engine(tmp_path: Any) -> None:
+    """Partial publishes an ephemeral event; the final dispatches exactly
+    one transcript through attribution + publish + fast lane."""
+    events: list[dict] = []
+
+    async def _server(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        total = 0
+        fired = False
+        while True:
+            data = await reader.read(65536)
+            if not data:
+                break
+            total += len(data)
+            if not fired and total >= 10240:
+                fired = True
+                for line in [_partial("i search"), _final(" the goblin corpse")]:
+                    writer.write((json.dumps(line) + "\n").encode())
+                await writer.drain()
+                try:
+                    writer.write_eof()
+                except (OSError, RuntimeError, NotImplementedError):
+                    pass
+        writer.close()
+
+    server = await asyncio.start_server(_server, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        engine = _engine(port, tmp_path, events.append)
+        chunk = b"\x40\x0f" * 3200  # 6400 bytes; two chunks trip a flush
+        await engine._stt_adapter.feed("u1", chunk)
+        await engine._stt_adapter.feed("u1", chunk)
+        for _ in range(100):
+            await asyncio.sleep(0.05)
+            if any(e["type"] == "transcript" for e in events):
+                break
+        finals = [e for e in events if e["type"] == "transcript"]
+        partials = [e for e in events if e["type"] == "transcript_partial"]
+        await engine.aclose()
+        assert partials, "expected a mid-speech partial"
+        assert len(finals) == 1, f"expected exactly one final, got {len(finals)}"
+        # partial + final increments accumulate into the whole utterance
+        assert finals[0]["text"] == "i search the goblin corpse"
+        assert finals[0]["user_id"] == "u1"
+    finally:
+        server.close()
+        await server.wait_closed()
 
 
-class _DetectStub:
-    """detect_trigger is imported into pipeline; fast-lane classification of
-    real whisper text is irrelevant here — treat everything as a trigger."""
+async def test_failed_session_reopens_with_backoff() -> None:
+    """A dead server costs one connect attempt per RETRY_S per user — not
+    one per chunk — and a recovered server is picked up automatically."""
+    adapter = StreamingSttAdapter(host="127.0.0.1", port=1)  # refused
+    adapter.RETRY_S = 0.05
+    assert await adapter.feed("u", b"\x00" * 100) is False
+    # Immediate retry is throttled (no new attempt, still False).
+    assert await adapter.feed("u", b"\x00" * 100) is False
+
+    # A server appears mid-outage: the throttled feed still refuses, but
+    # the next feed after the window reopens and holds the audio.
+    attempts = 0
+
+    async def _count(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        nonlocal attempts
+        attempts += 1
+        while await reader.read(65536):
+            pass
+        writer.close()
+
+    server = await asyncio.start_server(_count, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        adapter.port = port
+        assert await adapter.feed("u", b"\x00" * 100) is False
+        assert attempts == 0, "throttled feed attempted a connect"
+        await asyncio.sleep(0.08)
+        assert await adapter.feed("u", b"\x00" * 100) is True
+        assert attempts == 1
+        await adapter.close_all()
+    finally:
+        server.close()
+        await server.wait_closed()
 
 
-@pytest.mark.asyncio
-async def test_streaming_final_dispatches_once(tmp_path, monkeypatch):
-    if not await probe_server("127.0.0.1", 43007):
-        pytest.skip("SimulStreaming server not listening on 43007")
-    events.clear()
-
-    async def _never_trigger(gw, text):
-        return False
-
-    monkeypatch.setattr("dmd.pipeline.detect_trigger", _never_trigger)
-    engine = _engine(tmp_path)
-    with wave.open(WAV, "rb") as w:
-        frames = w.readframes(w.getnframes())
-    step = SR // 5 * 2  # 200 ms chunks at real pace
-    for off in range(0, len(frames), step):
-        await engine._stt_adapter.feed("u1", frames[off : off + step])
-        await asyncio.sleep(0.2)
-    # trailing silence so the server VAD endpoints
-    for _ in range(15):
-        await engine._stt_adapter.feed("u1", b"\x00" * step)
-        await asyncio.sleep(0.2)
-    # wait for final to arrive
-    for _ in range(50):
-        await asyncio.sleep(0.1)
-        if any(e["type"] == "transcript" for e in events):
-            break
-    finals = [e for e in events if e["type"] == "transcript"]
-    partials = [e for e in events if e["type"] == "transcript_partial"]
-    await engine.aclose()
-    assert finals, f"no streaming final; partials={len(partials)}"
-    assert "goblin" in finals[0]["text"].lower()
-    assert partials, "expected mid-speech partials"
-    # exactly ONE transcript for the utterance (no batch twin fired)
-    assert len(finals) == 1
+async def test_feed_never_raises_and_close_is_idempotent() -> None:
+    adapter = StreamingSttAdapter(host="127.0.0.1", port=1)
+    assert await adapter.feed("u", b"\x00" * 100) is False
+    assert adapter.has_session("u") is False
+    await adapter.close_user("u")  # unknown user: no-op
+    await adapter.close_all()
+    await adapter.close_all()
 
 
-@pytest.mark.asyncio
-async def test_batch_twin_is_deduped(tmp_path, monkeypatch):
-    """A late batch result covering the same window must not re-publish."""
-    events.clear()
+async def test_probe_server_true_and_false() -> None:
+    async def _noop(reader: object, writer: object) -> None:
+        # Must close: wait_closed() below blocks until every accepted
+        # connection is done.
+        w = writer  # type: ignore[union-attr]
+        w.close()
+        try:
+            await w.wait_closed()
+        except OSError:
+            pass
 
-    async def _never_trigger(gw, text):
-        return False
-
-    monkeypatch.setattr("dmd.pipeline.detect_trigger", _never_trigger)
-    engine = _engine(tmp_path)
-    import time as _t
-
-    now = _t.monotonic()
-    from dmd.attribution import AttributedSegment
-
-    # streaming final for window [now-4, now-1]
-    await engine._on_stream_final("u1", "i search the corpse", now - 4, now - 1)
-    # batch twin for overlapping window arrives late
-    twin = AttributedSegment(
-        user_id="u1", text="i search the corpse", t_start=now - 4, t_end=now - 1
-    )
-    await engine._publish_and_dispatch([twin])
-    # a genuinely different later utterance must NOT be dropped
-    other = AttributedSegment(
-        user_id="u1", text="roll a d20 for me", t_start=now + 30, t_end=now + 32
-    )
-    await engine._publish_and_dispatch([other])
-    texts = [e["text"] for e in events if e["type"] == "transcript"]
-    await engine.aclose()
-    assert texts.count("i search the corpse") == 1
-    assert "roll a d20 for me" in texts
+    server = await asyncio.start_server(_noop, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        assert await probe_server("127.0.0.1", port) is True
+    finally:
+        server.close()
+        await server.wait_closed()
+    assert await probe_server("127.0.0.1", port) is False

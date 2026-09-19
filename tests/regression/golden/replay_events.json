@@ -15,9 +15,27 @@
     "user_id": "dm"
   },
   {
+    "path": "streaming",
+    "post_speech_ms": 0.0,
+    "queue_wait_ms": 0.0,
+    "stt_ms": 0.0,
+    "t": 0.0,
+    "type": "stt_latency",
+    "user_id": "dm"
+  },
+  {
     "t": 2.0,
     "text": "never mind, rough luck there",
     "type": "transcript",
+    "user_id": "alice"
+  },
+  {
+    "path": "streaming",
+    "post_speech_ms": 0.0,
+    "queue_wait_ms": 0.0,
+    "stt_ms": 0.0,
+    "t": 0.0,
+    "type": "stt_latency",
     "user_id": "alice"
   },
   {
@@ -31,7 +49,7 @@
         "items": [],
         "sources": [],
         "tier": "card",
-        "tool_calls": 1
+        "tool_calls": 0
       },
       "player_ids": [],
       "status": "active",

@@ -3,15 +3,12 @@
 Regression suite for the 2026-09-05 live defect: the monitor called the
 Gateway's coroutine function synchronously, unpacked the coroutine object
 instead of its result, and the probe task died at startup — the UI banner
-silently reported "STT unavailable" while whisperx was answering 200.
+silently reported "STT unavailable" while the streaming server was up.
 """
 
 from __future__ import annotations
 
-import json
-from typing import Any
-
-import httpx
+import asyncio
 
 from dmd.config import load_config_dict
 from dmd.gateway import Gateway
@@ -94,23 +91,41 @@ async def test_run_loop_survives_a_failing_probe() -> None:
 
 
 async def test_contract_with_the_real_gateway() -> None:
-    """Drive one probe against the real Gateway + MockTransport: the monitor
-    and the gateway agree on the (bool, str) coroutine contract."""
+    """Drive probes against the real Gateway: a listening TCP port reads
+    healthy, a closed one reads dead. The monitor and the gateway agree
+    on the (bool, str) coroutine contract."""
 
-    def handler(req: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"status": "ok"})
+    async def _noop(reader: object, writer: object) -> None:
+        # Must close: wait_closed() below blocks until every accepted
+        # connection is done.
+        w = writer  # type: ignore[union-attr]
+        w.close()
+        try:
+            await w.wait_closed()
+        except OSError:
+            pass
 
+    server = await asyncio.start_server(_noop, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
     cfg = load_config_dict(
         {
             "models": {
                 "synthesis": {"base_url": "http://test", "model_id": "m"},
-                "stt": {"base_url": "http://test", "dialect": "whisperx"},
+                "stt": {"stream_host": "127.0.0.1", "stream_port": port},
             }
         }
     )
     gw = Gateway(cfg)
-    gw._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    mon = SttHealthMonitor(gw)
-    await mon._probe_once()
-    assert mon.snapshot()["healthy"] is True
-    await gw.aclose()
+    try:
+        mon = SttHealthMonitor(gw)
+        await mon._probe_once()
+        assert mon.snapshot() == {
+            "healthy": True,
+            "detail": f"tcp 127.0.0.1:{port} ok",
+        }
+        server.close()
+        await server.wait_closed()
+        await mon._probe_once()
+        assert mon.snapshot()["healthy"] is False
+    finally:
+        await gw.aclose()

@@ -64,23 +64,18 @@
         <label>Base URL <input id="in-jev-base" type="text" autocomplete="off" placeholder="http://host:8199"></label>
       </div>
       <div class="cred" aria-label="speech recognition">
-        <h2>Speech recognition</h2>
+        <h2>Speech recognition (streaming)</h2>
         <div class="prov">
           <label><input type="radio" name="sttmode" value="local"> Local server</label>
-          <label><input type="radio" name="sttmode" value="remote"> Remote endpoint</label>
+          <label><input type="radio" name="sttmode" value="remote"> Remote server</label>
         </div>
         <p id="stt-req" class="req" hidden></p>
         <div id="stt-remote-fields" hidden>
           <div class="row">
-            <label>Dialect
-              <select id="in-stt-dialect">
-                <option value="openai">openai</option>
-                <option value="whisperx">whisperx</option>
-              </select>
-            </label>
-            <label>API key <input id="in-stt-key" type="password" autocomplete="off" placeholder="blank = keep"></label>
+            <label>Stream host <input id="in-stt-host" type="text" autocomplete="off" placeholder="192.168.0.x"></label>
+            <label>Stream port <input id="in-stt-port" type="text" autocomplete="off" placeholder="43007"></label>
           </div>
-          <label>Base URL <input id="in-stt-base" type="text" autocomplete="off" placeholder="http://host:port"></label>
+          <p class="hint">A whisper_online_server on your network (same streaming protocol, no key).</p>
         </div>
       </div>
     </section>

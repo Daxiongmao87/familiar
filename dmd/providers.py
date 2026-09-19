@@ -96,7 +96,8 @@ class EndpointRouter:
     effective endpoint on every call, so flipping
     ``cfg.models.synthesis.provider`` (and persisting it) reroutes the
     next ``chat()`` with no rebuild and no restart. Roles without a
-    provider flag (stt, vision, embeddings) always resolve to config.
+    provider flag (vision, embeddings) always resolve to config. STT is
+    not an HTTP role at all — it streams to a TCP server (see SttRole).
     """
 
     def __init__(self, cfg: AppConfig) -> None:
@@ -112,8 +113,6 @@ class EndpointRouter:
         if role in ("synthesis", "fast"):
             return synthesis_endpoint_for(self._cfg, role)
         m = self._cfg.models
-        if role == "stt":
-            return m.stt
         if role == "vision":
             v = m.vision
             if v is None:  # pragma: no cover - Gateway raises the typed error

@@ -86,26 +86,18 @@ class VisionRole(BaseModel):
     request_timeout_s: float | None = None
 
 
-class SttRole(EndpointConfig):
-    """Speech-to-text endpoint (openai, whisperx, or streaming dialect)."""
+class SttRole(BaseModel):
+    """Streaming-only speech recognition: the SimulStreaming whisper server.
 
-    base_url: str
-    dialect: str = (
-        "openai"  # "openai" = /v1/audio/transcriptions; "whisperx" = POST /transcribe;
-        # "streaming" = SimulStreaming TCP server (raw s16le PCM in,
-        # newline JSON partials/finals out) — the live-voice path
-    )
-    # WhisperX request options, exposed from config (SPEC §2 zero-hardcoding:
-    # the gateway used to hardcode diarize=false&align=false, suppressing the
-    # whisperx-server's own defaults).
-    # diarization is DEAD (owner decision 2026-09-05): pyannote never beat 60%
-    # on the mixed capture and costs 3.6 s/utterance. Identity comes from JIT
-    # mic-state (§7a attribution on the final) + post-context correction.
-    # The flag survives only for the batch queue's non-streaming dialects.
-    diarize: bool = False
-    align: bool = False
-    # Streaming STT (SimulStreaming whisper server): host/port for the live
-    # voice path. sample_rate must match the source (16 kHz mono int16).
+    There is exactly one STT path: raw 16 kHz mono s16le PCM is pushed to
+    the TCP server at stream_host:stream_port and committed finals stream
+    back (owner decision: batch HTTP transcription added seconds of delay
+    and is removed — no dialects, no batch queue, no safety net). Local
+    runs point at the provisioned sidecar (127.0.0.1:43007); remote runs
+    point at a whisper_online_server reachable on the network. The
+    protocol carries no auth, so there is no api_key here.
+    """
+
     stream_host: str = "127.0.0.1"
     stream_port: int = 43007
 

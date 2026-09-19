@@ -15,8 +15,7 @@
   WebSocket event bus, REST endpoints, entrypoint, and the live UI window),
   `voice_presence.py` (Discord DAVE E2EE voice presence), `sources/`
   (`discord_src.py`, `browser.py`, `replay.py`, `transcript_replay.py`),
-  `vad.py` +
-  `speaking_tracker.py` (utterance segmentation and per-speaker state),
+  `speaking_tracker.py` (per-speaker state),
   `pipeline.py` + `triggers.py` (orchestration and fast-lane triggers),
   `openjev.py` (openjev deploy/wait gate),
   `jevworker.py` (JEV-routed deterministic worker),

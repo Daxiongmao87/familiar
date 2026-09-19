@@ -3,10 +3,11 @@
 Scripted behavior, no randomness:
   GET  /v1/models                      -> lists mock-synthesis / mock-fast / mock-embed
   POST /v1/chat/completions            -> card JSON for synthesis role, classifier JSON for fast
-  POST /v1/audio/transcriptions        -> pops next phrase from the STT script queue
   POST /v1/embeddings                  -> stable hash-derived vectors, dim 8
-  POST /v1/_mock/stt_script            -> queue phrases for subsequent transcriptions
   GET  /v1/_mock/requests              -> recorded request log for assertions
+
+(STT is streaming-only over raw TCP — it has no HTTP mock here. Tests
+that need transcription run a fake SimulStreaming TCP server instead.)
 """
 
 from __future__ import annotations
@@ -31,18 +32,11 @@ def _stable_vec(text: str, dim: int = 8) -> list[float]:
 class MockState:
     def __init__(self) -> None:
         self.lock = threading.Lock()
-        self.stt_queue: list[str] = []
         self.requests: list[dict[str, Any]] = []
 
     def record(self, path: str, body: Any) -> None:
         with self.lock:
             self.requests.append({"path": path, "body": body})
-
-    def next_phrase(self) -> str:
-        with self.lock:
-            if self.stt_queue:
-                return self.stt_queue.pop(0)
-        return "(silence)"
 
 
 def _content_of(req: dict[str, Any]) -> str:
@@ -133,16 +127,6 @@ def create_mock_app(state: MockState | None = None) -> FastAPI:
             }
         )
 
-    @app.post("/v1/audio/transcriptions")
-    async def transcriptions(request: Request) -> dict[str, Any]:
-        form = await request.form()
-        prompt_field = form.get("prompt")
-        state.record(
-            "/v1/audio/transcriptions",
-            {"prompt_head": str(prompt_field)[:80] if prompt_field else None},
-        )
-        return {"text": state.next_phrase()}
-
     @app.post("/v1/embeddings")
     async def embeddings(request: Request) -> dict[str, Any]:
         req = await request.json()
@@ -157,14 +141,6 @@ def create_mock_app(state: MockState | None = None) -> FastAPI:
             ],
             "model": req.get("model", "mock-embed"),
         }
-
-    @app.post("/v1/_mock/stt_script")
-    async def stt_script(request: Request) -> dict[str, int]:
-        body = await request.json()
-        phrases = [str(p) for p in body.get("texts", [])]
-        with state.lock:
-            state.stt_queue.extend(phrases)
-            return {"queued": len(state.stt_queue)}
 
     @app.get("/v1/_mock/requests")
     async def recorded() -> dict[str, Any]:

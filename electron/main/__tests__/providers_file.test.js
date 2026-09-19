@@ -18,8 +18,8 @@ models:
     base_url: http://remote:8080/v1
     model_id: minicpm5-2b
   stt:
-    base_url: http://stt
-    dialect: streaming
+    stream_host: 127.0.0.1
+    stream_port: 43007
   embeddings:
     provider: local
     model_id: BAAI/bge-small-en-v1.5
@@ -40,9 +40,11 @@ function tmpConfig(text) {
   return file;
 }
 
-test('scan reads synthesis/jev providers and streaming dialect', () => {
+test('scan reads synthesis/jev providers and loopback STT', () => {
   const out = scanProviders(tmpConfig());
   assert.deepEqual(out, { synthesis: 'remote', jev: 'remote', stt: 'local' });
+  const remote = tmpConfig(TEMPLATE.replace('stream_host: 127.0.0.1', 'stream_host: 192.168.0.9'));
+  assert.equal(scanProviders(remote).stt, 'remote');
 });
 
 test('scan ignores the embeddings provider flag', () => {
@@ -97,9 +99,8 @@ test('scanSetup reads endpoints without leaking secrets', () => {
     '    model_id: m1',
     '    api_key: ${LLM_API_KEY}',
     '  stt:',
-    '    base_url: http://stt:9999',
-    '    dialect: whisperx',
-    '    api_key: k2',
+    '    stream_host: 192.168.0.9',
+    '    stream_port: 43111',
     'openjev:',
     '  base_url: http://jev:8199/',
   ].join('\n'));
@@ -107,11 +108,10 @@ test('scanSetup reads endpoints without leaking secrets', () => {
   assert.equal(out.synthesis.base_url, 'http://llm:8080/v1');
   assert.equal(out.synthesis.has_api_key, false, '${VAR} placeholder is not configured');
   assert.equal(out.jev.base_url, 'http://jev:8199/');
-  assert.deepEqual(out.stt, { mode: 'remote', dialect: 'whisperx',
-    base_url: 'http://stt:9999', has_api_key: true });
+  assert.deepEqual(out.stt, { mode: 'remote', stream_host: '192.168.0.9',
+    stream_port: '43111' });
   assert.deepEqual(out.discord, { has_token: true, guild_id: '111', dm_user_id: '222' });
   assert.ok(!JSON.stringify(out).includes('sekrit'), 'token never echoed');
-  assert.ok(!JSON.stringify(out).includes('k2'), 'key never echoed');
 });
 
 test('writeSetupConfig writes endpoints, discord, and STT mode', () => {
@@ -123,18 +123,21 @@ test('writeSetupConfig writes endpoints, discord, and STT mode', () => {
     discord: { token: 'tok-1', guild_id: '111', dm_user_id: '222' },
     synthesisRemote: { base_url: 'http://llm:8080/v1/', model_id: 'mx', api_key: 'sk-1' },
     jevRemote: { base_url: 'http://jev:8199' },
-    stt: { mode: 'remote', dialect: 'whisperx', base_url: 'http://stt:9', api_key: 'k-1' },
+    stt: { mode: 'remote', stream_host: '192.168.0.9', stream_port: '43111' },
   });
   const text = fs.readFileSync(file, 'utf-8');
   assert.ok(text.includes('token: tok-1'));
   assert.ok(text.includes('base_url: http://llm:8080/v1\n') || text.includes('base_url: http://llm:8080/v1 '),
     'trailing slash stripped');
   assert.ok(text.includes('model_id: mx'));
-  assert.ok(text.includes('dialect: whisperx'));
+  assert.ok(text.includes('stream_host: 192.168.0.9'));
+  assert.ok(text.includes('stream_port: 43111'));
   const back = scanSetup(file);
   assert.equal(back.synthesis.base_url, 'http://llm:8080/v1');
   assert.equal(back.synthesis.has_api_key, true);
   assert.equal(back.stt.mode, 'remote');
+  assert.equal(back.stt.stream_host, '192.168.0.9');
+  assert.equal(back.stt.stream_port, '43111');
   assert.equal(back.discord.has_token, true);
   // Empty values leave existing config untouched (never clear secrets).
   writeSetupConfig(file, { synthesisRemote: { base_url: '', model_id: '', api_key: '' } });
@@ -147,10 +150,15 @@ test('writeSetupConfig flips STT to local streaming and rejects bad input', () =
   const file = tmpConfig();
   writeSetupConfig(file, { stt: { mode: 'local' } });
   assert.equal(scanProviders(file).stt, 'local');
+  assert.equal(scanSetup(file).stt.stream_host, '127.0.0.1');
+  assert.equal(scanSetup(file).stt.stream_port, '43007');
   assert.throws(() => writeSetupConfig(file, { stt: { mode: 'cloud' } }), /stt.mode/);
   assert.throws(() => writeSetupConfig(file, { synthesisRemote: { base_url: 'nope' } }), /http/);
   assert.throws(() => writeSetupConfig(file, { jevRemote: { base_url: 'ftp://x' } }), /http/);
-  assert.throws(() => writeSetupConfig(file, { stt: { mode: 'remote', dialect: 'x' } }), /dialect/);
+  assert.throws(() => writeSetupConfig(file,
+    { stt: { mode: 'remote', stream_host: '', stream_port: '43007' } }), /host/);
+  assert.throws(() => writeSetupConfig(file,
+    { stt: { mode: 'remote', stream_host: 'h', stream_port: '99999' } }), /port/);
 });
 
 test('round-trip works on the real config.example.yaml (trailing comments)', () => {
@@ -161,8 +169,8 @@ test('round-trip works on the real config.example.yaml (trailing comments)', () 
   const file = path.join(dir, 'familiar-config.yaml');
   fs.copyFileSync(path.join(repoRoot, 'config.example.yaml'), file);
   assert.deepEqual(scanProviders(file),
-    { synthesis: 'remote', jev: 'remote', stt: 'remote' });
+    { synthesis: 'remote', jev: 'remote', stt: 'local' });
   writeProviders(file, { synthesis: 'local', jev: 'local' });
   assert.deepEqual(scanProviders(file),
-    { synthesis: 'local', jev: 'local', stt: 'remote' });
+    { synthesis: 'local', jev: 'local', stt: 'local' });
 });

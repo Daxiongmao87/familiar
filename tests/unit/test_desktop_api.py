@@ -29,7 +29,7 @@ def _cfg() -> Any:
                     "model_id": "minicpm5-2b",
                     "api_key": "sk-live-secret",
                 },
-                "stt": {"base_url": "http://stt"},
+                "stt": {},
             },
             "openjev": {
                 "enabled": True,

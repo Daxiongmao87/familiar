@@ -45,12 +45,13 @@ python dmd/server.py config.yaml
 ```
 
 `SessionEngine.consume_source` is the single audio entry point (browser,
-Discord, and replay sources all implement `AudioSource`). STT fans out to
-batch (`Gateway.transcribe`, dialect openai/whisperx) and, when
-`dialect=streaming`, to `StreamingSttAdapter` (TCP 127.0.0.1:43007,
-SimulStreaming protocol: raw s16le PCM in, newline-JSON partials/finals
-out). Triggers route to `WorkerAgent`, or — when `openjev.enabled` — to
-`OpenjevGate.decide` (+ `JevWorker` when `directed_worker`).
+Discord, and replay sources all implement `AudioSource`). STT is
+streaming-only: PCM goes to `StreamingSttAdapter` (TCP stream_host /
+stream_port, SimulStreaming protocol: raw s16le PCM in, newline-JSON
+partials/finals out). There is no batch path — batch HTTP transcription
+was removed for its multi-second delay. Triggers route to `WorkerAgent`,
+or — when `openjev.enabled` — to `OpenjevGate.decide` (+ `JevWorker`
+when `directed_worker`).
 
 Desktop mode (new): Electron starts first, seeds
 `<userData>/familiar-config.yaml` from the packaged example once, verifies
@@ -170,7 +171,8 @@ Setup window (3 steps):
 2. Credentials + endpoints. Discord token/guild/DM id (soft —
    skippable; without it speaker names are guessed), remote endpoint
    URL/model/key fields for every provider set to remote, and the STT
-   mode choice (local streaming server vs remote dialect+URL+key).
+   mode choice (local provisioned server vs remote host:port of a
+   whisper_online_server on the network — same protocol, no key).
    Required fields are enforced against the provider choice; secrets
    are write-only and the config file is chmod 600.
 3. Install + launch. Downloads with per-file/overall progress, then
@@ -205,8 +207,8 @@ weights `dropbox-dash/faster-whisper-large-v3-turbo @ 0a363e91`
 the server's `--model` choices), not a code-derived pin — the adapter
 protocol is model-independent. Note: the pinned server hardcodes
 `device="cuda"` for the faster-whisper backend, so local STT also
-requires NVIDIA CUDA (CPU-only machines keep the remote STT dialects).
-Batch fallback (`Gateway.transcribe`) is untouched.
+requires NVIDIA CUDA (CPU-only machines are forced to a remote
+streaming server host:port). There is no batch fallback.
 
 ## 8. Manifest pins (verified live 2026-09-19)
 
@@ -356,10 +358,10 @@ Honest limitations (v1):
   release — by construction (identical code + weights) zero drift is
   expected.
 - Local STT likewise requires CUDA (the pinned server hardcodes
-  `device="cuda"`); CPU-only machines keep the remote STT dialects.
-  Live transcription through a provisioned server was not run
-  in-session (same GPU saturation); argv, sizes, and the import closure
-  were verified live.
+  `device="cuda"`); CPU-only machines are forced to a remote
+  streaming server. Live transcription through a provisioned server
+  was not run in-session (same GPU saturation); argv, sizes, and the
+  import closure were verified live.
 - Local synthesis requires WebGPU + `shader-f16`. The MLC build is a
   pinned community artifact (no official MiniCPM5 MLC build exists);
   JSON-schema conformance rides WebLLM's `json_object`+schema mode plus

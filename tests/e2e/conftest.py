@@ -124,7 +124,7 @@ def stack(tmp_path_factory: pytest.TempPathFactory) -> Any:
                     "model_id": "mock-fast",
                     "extra_body": {"enable_thinking": False},
                 },
-                "stt": {"base_url": mock_url, "api_key": "e2e-key"},
+                "stt": {},
                 "embeddings": {"provider": "local", "model_id": "hash8"},
             },
             "orchestration": {"max_concurrent": 2, "job_timeout_s": 10.0},

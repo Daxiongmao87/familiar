@@ -20,7 +20,7 @@ function saved(over) {
   return Object.assign({
     synthesis: { base_url: '', model_id: '', has_api_key: false },
     jev: { base_url: '' },
-    stt: { mode: 'remote', dialect: 'openai', base_url: '', has_api_key: false },
+    stt: { mode: 'local', stream_host: '127.0.0.1', stream_port: '43007' },
     discord: { has_token: false, guild_id: '', dm_user_id: '' },
   }, over || {});
 }
@@ -69,9 +69,17 @@ test('validateSaveSetup forces STT remote on CUDA-less hardware', () => {
   assert.throws(
     () => validateSaveSetup({ stt: { mode: 'local' } }, providers, s, NOCUDA, true),
     /cannot run the local STT server/);
+  // Saved loopback host cannot satisfy remote; fresh fields are required.
   assert.throws(
-    () => validateSaveSetup({ stt: { mode: 'remote', base_url: '' } }, providers, s, NOCUDA, true),
-    /STT base URL/);
-  validateSaveSetup({ stt: { mode: 'remote', dialect: 'openai', base_url: 'http://s' } },
+    () => validateSaveSetup({ stt: { mode: 'remote', stream_host: '' } }, providers, s, NOCUDA, true),
+    /STT stream host/);
+  validateSaveSetup({ stt: { mode: 'remote', stream_host: '192.168.0.9', stream_port: '43007' } },
     providers, s, NOCUDA, true);
+  // A previously saved remote host satisfies without re-entry.
+  const sRemote = saved({
+    synthesis: { base_url: 'http://x', model_id: 'm', has_api_key: false },
+    jev: { base_url: 'http://j' },
+    stt: { mode: 'remote', stream_host: '192.168.0.9', stream_port: '43007' },
+  });
+  validateSaveSetup({ stt: { mode: 'remote' } }, providers, sRemote, NOCUDA, true);
 });

@@ -9,6 +9,7 @@ This file's tests pass; the init bug is documented and reported.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 from typing import Any
@@ -30,10 +31,7 @@ def _cfg(*, with_api_key: bool = False, with_extra_body: bool = False,
                 "api_key": "sk-test" if with_api_key else None,
                 "extra_body": {"unique_param": "xyz"} if with_extra_body else {},
             },
-            "stt": {
-                "base_url": "http://test",
-                "api_key": "sk-test" if with_api_key else None,
-            },
+            "stt": {},
         }
     })
 
@@ -184,25 +182,6 @@ async def test_bearer_header_present_iff_api_key_set() -> None:
 
 
 @pytest.mark.asyncio
-async def test_transcribe_multipart_returns_text_field() -> None:
-    """transcribe POSTs multipart/form-data and returns the 'text' field."""
-    captured: dict[str, Any] = {}
-
-    def handler(req: httpx.Request) -> httpx.Response:
-        captured["content_type"] = req.headers.get("content-type", "")
-        captured["path"] = req.url.path
-        captured["method"] = req.method
-        return httpx.Response(200, json={"text": "transcribed content"})
-
-    gw = _build(handler)
-    out = await gw.transcribe(b"\x00\x00\x00\x00FAKEWAV", filename="chunk.wav")
-    assert out == "transcribed content"
-    assert captured["path"] == "/audio/transcriptions"
-    assert captured["method"] == "POST"
-    assert captured["content_type"].startswith("multipart/form-data")
-
-
-@pytest.mark.asyncio
 async def test_probe_all_extra_body_ok_and_rejected() -> None:
     """probe_all reports extra_body_ok and extra_body_rejected:<status>."""
 
@@ -261,7 +240,7 @@ async def test_extra_body_verbatim_merge_into_chat_body() -> None:
                 "model_id": "m",
                 "extra_body": {"unique_param": "xyz", "top_k": 50, "flag": True},
             },
-            "stt": {"base_url": "http://test"},
+            "stt": {},
         }
     })
     gw = Gateway(cfg)
@@ -275,92 +254,60 @@ async def test_extra_body_verbatim_merge_into_chat_body() -> None:
     assert body["flag"] is True
 
 # ---------------------------------------------------------------------------
-# SPEC §2 zero-hardcoding: whisperx diarize/align come from config, not the
-# gateway body (the old code hardcoded diarize=false&align=false).
+# STT health: streaming-only TCP probe (no HTTP dialects remain).
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_whisperx_params_reflect_config_diarize_align() -> None:
-    captured: dict[str, Any] = {}
-
-    def handler(req: httpx.Request) -> httpx.Response:
-        if req.url.path == "/transcribe":
-            captured["params"] = dict(req.url.params)
-            return httpx.Response(200, json={"text": "hello"})
-        return httpx.Response(404)
-
-    def build(diarize: bool, align: bool) -> Gateway:
-        cfg = load_config_dict({
-            "models": {
-                "synthesis": {"base_url": "http://test", "model_id": "s"},
-                "stt": {
-                    "base_url": "http://test",
-                    "dialect": "whisperx",
-                    "diarize": diarize,
-                    "align": align,
-                },
-            }
-        })
-        gw = Gateway(cfg)
-        gw._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-        return gw
-
-    await build(True, False).transcribe(b"WAV")
-    assert captured["params"] == {"diarize": "true", "align": "false"}
-    await build(False, True).transcribe(b"WAV")
-    assert captured["params"] == {"diarize": "false", "align": "true"}
+def _stt_cfg(port: int) -> Any:
+    return load_config_dict({
+        "models": {
+            "synthesis": {"base_url": "http://test", "model_id": "s"},
+            "stt": {"stream_host": "127.0.0.1", "stream_port": port},
+        }
+    })
 
 
 @pytest.mark.asyncio
-async def test_transcribe_diarized_returns_speaker_segments() -> None:
-    def handler(req: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "text": "one two",
-                "segments": [
-                    {"speaker": "SPEAKER_00", "start": 0.1, "end": 1.0, "text": " one "},
-                    {"speaker": "SPEAKER_01", "start": 1.2, "end": 2.0, "text": " two "},
-                ],
-            },
+async def test_stt_health_reports_listening_port_reachable() -> None:
+    async def _noop(reader: object, writer: object) -> None:
+        # Must close: wait_closed() below blocks until every accepted
+        # connection is done.
+        w = writer  # type: ignore[union-attr]
+        w.close()
+        try:
+            await w.wait_closed()
+        except OSError:
+            pass
+
+    server = await asyncio.start_server(_noop, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        gw = Gateway(_stt_cfg(port))
+        gw._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda req: httpx.Response(404))
         )
-
-    cfg = load_config_dict({
-        "models": {
-            "synthesis": {"base_url": "http://test", "model_id": "s"},
-            "stt": {"base_url": "http://test", "dialect": "whisperx"},
-        }
-    })
-    gw = Gateway(cfg)
-    gw._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    text, segments = await gw.transcribe_diarized(b"WAV")
-    assert text == "one two"
-    assert segments == [
-        {"speaker": "SPEAKER_00", "start": 0.1, "end": 1.0, "text": "one"},
-        {"speaker": "SPEAKER_01", "start": 1.2, "end": 2.0, "text": "two"},
-    ]
+        reachable, detail = await gw.stt_health()
+        assert reachable is True
+        assert detail == f"tcp 127.0.0.1:{port} ok"
+        await gw.aclose()
+    finally:
+        server.close()
+        await server.wait_closed()
 
 
 @pytest.mark.asyncio
-async def test_stt_health_5xx_reports_unreachable() -> None:
-    """Regression: stt_health fell through to None on 5xx (uncaught TypeError
-    at the tuple-unpack call site)."""
-
-    def handler(req: httpx.Request) -> httpx.Response:
-        return httpx.Response(503, text="models not resident")
-
-    cfg = load_config_dict({
-        "models": {
-            "synthesis": {"base_url": "http://test", "model_id": "s"},
-            "stt": {"base_url": "http://test", "dialect": "whisperx"},
-        }
-    })
-    gw = Gateway(cfg)
-    gw._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+async def test_stt_health_refused_port_reports_unreachable_tuple() -> None:
+    """Regression: stt_health must always return a (bool, str) tuple — the
+    old code fell through to None on some failures (uncaught TypeError at
+    the tuple-unpack call site)."""
+    gw = Gateway(_stt_cfg(1))  # nothing listens on port 1
+    gw._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda req: httpx.Response(404))
+    )
     reachable, detail = await gw.stt_health()
     assert reachable is False
-    assert "503" in detail
+    assert "refused" in detail
+    await gw.aclose()
 
 
 @pytest.mark.asyncio
@@ -413,7 +360,7 @@ async def test_chat_thinking_overrides_config_extra_body() -> None:
                 "model_id": "m",
                 "extra_body": {"chat_template_kwargs": {"enable_thinking": True}},
             },
-            "stt": {"base_url": "http://test"},
+            "stt": {},
         }
     })
     gw = Gateway(cfg)

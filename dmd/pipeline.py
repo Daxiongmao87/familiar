@@ -1,4 +1,4 @@
-"""Session runtime: STT over VAD, lexicon post-correction, trigger detection,
+"""Session runtime: streaming STT, lexicon post-correction, trigger detection,
 
 synthesis-job submission, and source consumption.
 """
@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import struct
 import time
 import uuid
 from collections import deque
@@ -28,35 +27,12 @@ from .staging import StagedContext, prefetch_entity, render_staged_block
 from .streaming_stt import StreamingSttAdapter
 from .triggers import detect_trigger
 from .types import Card, Job, LexiconEntry, Priority, Utterance
-from .vad import UtteranceSegmenter
 
 logger = logging.getLogger(__name__)
 
 # Intake chunk-handler work above this many ms means something awaits in the
 # feed loop — the exact SPEC §14 defect (inline STT stall) we must never ship.
 _INTAKE_BLOCK_WARN_MS = 50.0
-
-
-def _wav_bytes(pcm: bytes, sample_rate: int = 16000) -> bytes:
-    """Wrap raw int16 mono PCM into a minimal 16-bit PCM WAV container."""
-    data_size = len(pcm)
-    header = struct.pack(
-        "<4sI4s4sIHHIIHH4sI",
-        b"RIFF",
-        36 + data_size,
-        b"WAVE",
-        b"fmt ",
-        16,
-        1,
-        1,
-        sample_rate,
-        sample_rate * 2,
-        2,
-        16,
-        b"data",
-        data_size,
-    )
-    return header + pcm
 
 
 def _lexicon_prompt(entries: list[LexiconEntry], max_chars: int = 500) -> str:
@@ -111,70 +87,6 @@ def _make_job(
         t_created=time.monotonic(),
         context_window_s=context_window_s,
     )
-
-
-class _PerUserSttQueue:
-    """Per-user background STT workers so the audio feed never awaits STT inline.
-
-    ``consume_source`` enqueues each VAD-segmented utterance and keeps feeding
-    the segmenter immediately; a dedicated worker per user then transcribes and
-    routes the utterance sequentially. This keeps intake unblocked by STT
-    latency (a slow endpoint no longer stalls the VAD) while preserving
-    per-user ordering, so one user's slow transcription never delays the feed
-    or another user's utterances.
-
-    Every item carries its enqueue timestamp so the dispatch path can log
-    queue-wait and STT latency against the SPEC §14 budget (ephemeral ≤ ~2 s).
-    """
-
-    def __init__(
-        self,
-        dispatch: Callable[[str, bytes, Utterance, float], Awaitable[None]],
-    ) -> None:
-        self._dispatch = dispatch
-        self._queues: dict[str, asyncio.Queue] = {}
-        self._tasks: dict[str, asyncio.Task] = {}
-        self._closed = False
-
-    def enqueue(self, user_id: str, audio: bytes, u: Utterance) -> None:
-        """Schedule ``u`` for transcription on that user's worker (non-blocking)."""
-        if self._closed:
-            return
-        t_enqueued = time.monotonic()
-        q = self._queues.get(user_id)
-        if q is None:
-            q = asyncio.Queue()
-            self._queues[user_id] = q
-            self._tasks[user_id] = asyncio.create_task(self._run(user_id, q))
-        q.put_nowait((audio, u, t_enqueued))
-
-    async def _run(self, user_id: str, q: asyncio.Queue) -> None:
-        while True:
-            audio, u, t_enqueued = await q.get()
-            try:
-                await self._dispatch(user_id, audio, u, t_enqueued)
-            except Exception:
-                pass
-            finally:
-                q.task_done()
-
-    async def drain(self) -> None:
-        """Wait until every enqueued utterance has been processed."""
-        for q in list(self._queues.values()):
-            await q.join()
-
-    async def close(self) -> None:
-        """Cancel all workers and drop any pending (unprocessed) utterances."""
-        self._closed = True
-        for task in self._tasks.values():
-            task.cancel()
-        for task in self._tasks.values():
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):
-                pass
-        self._queues.clear()
-        self._tasks.clear()
 
 
 class SessionEngine:
@@ -237,31 +149,17 @@ class SessionEngine:
             tool_registry=tool_registry,
         )
         self._monitor: TranscriptMonitor | None = None
-        self._stt_queue = _PerUserSttQueue(self._dispatch_utterance)
-        # Streaming STT (SimulStreaming server, dialect="streaming"): the
-        # LIVE voice path. Audio is pushed straight to the server and the
-        # server's own VAD endpoints segments — finals land ~0.6 s after
-        # speech stops (vs 3.4 s batch floor). Partial transcripts fire
-        # mid-speech for the ephemeral UI. The batch queue remains for
-        # dialects that aren't streaming.
-        self._streaming = getattr(cfg.models.stt, "dialect", "") == "streaming"
-        self._stt_adapter: StreamingSttAdapter | None = None
-        if self._streaming:
-            self._stt_adapter = StreamingSttAdapter(
-                host=cfg.models.stt.stream_host,
-                port=cfg.models.stt.stream_port,
-                on_partial=self._on_stream_partial,
-                on_final=self._on_stream_final,
-            )
-        # Streaming-final bookkeeping: per-user last-final wall stamps for
-        # diagnostics, plus recent transcript windows used for DUAL-PATH
-        # DEDUP. With streaming live, the batch queue runs as a safety net;
-        # the same speech can arrive from either path in either order. The
-        # first dispatch wins; a late twin whose time window overlaps an
-        # already-published window by >50% is dropped (§14 latency budget
-        # unaffected — dedup is a dict scan).
-        self._stream_last_final: dict[str, float] = {}
-        self._recent_finals: dict[str, list[tuple[float, float]]] = {}
+        # Streaming STT is the only transcription path: audio is pushed
+        # straight to the SimulStreaming server and the server's own VAD
+        # endpoints segments — finals land ~0.6 s after speech stops.
+        # Partial transcripts fire mid-speech for the ephemeral UI. There
+        # is no batch queue and no fallback (owner decision).
+        self._stt_adapter = StreamingSttAdapter(
+            host=cfg.models.stt.stream_host,
+            port=cfg.models.stt.stream_port,
+            on_partial=self._on_stream_partial,
+            on_final=self._on_stream_final,
+        )
         self._intake_stats: dict[str, float] = {}
         self._pending_submits: set[asyncio.Task] = set()
         # Session controls (SPEC §15): pause-capture drops incoming audio;
@@ -425,66 +323,6 @@ class SessionEngine:
     def _remember(self, u: Utterance) -> None:
         self._recent.append(u)
 
-    async def _dispatch_utterance(
-        self, user_id: str, audio: bytes, u: Utterance, t_enqueued: float
-    ) -> None:
-        """Worker-side STT for one queued utterance (runs off the intake loop).
-
-        Timestamps every stage against the §14 budget: enqueue -> worker start
-        (queue wait), STT duration, and total post-speech latency to the
-        published transcript. Logged per utterance and published as an
-        ``stt_latency`` event so the live UI and the session log can both
-        measure intake non-blocking and the ephemeral ≤ ~2 s target.
-
-        When the streaming path is live, the batch queue is a safety net
-        only: the same speech may arrive from both paths in either order.
-        Duplicates are suppressed symmetrically at dispatch time —
-        _publish_and_dispatch drops any transcript whose time window
-        overlaps one already dispatched for that user within the last few
-        seconds (first final wins, late twin dropped).
-        """
-        t_worker_start = time.monotonic()
-        queue_wait_ms = (t_worker_start - t_enqueued) * 1000.0
-        try:
-            produced = await self.transcribe_pcm(user_id, audio, u.t_start, u.t_end)
-        except Exception as exc:
-            self.on_event(
-                {
-                    "type": "transcript_error",
-                    "user_id": user_id,
-                    "error": f"{type(exc).__name__}: {exc}",
-                    "t": u.t_end,
-                }
-            )
-            return
-        t_done = time.monotonic()
-        stt_ms = (t_done - t_worker_start) * 1000.0
-        post_speech_ms = (t_done - u.t_end) * 1000.0
-        # `produced` utterances were already published AND dispatched inside
-        # transcribe_pcm -> _publish_and_dispatch (shared with the streaming
-        # path); this worker only adds the latency accounting.
-        logger.info(
-            "stt-latency user=%s enqueued=%.3f worker_start=%.3f done=%.3f "
-            "queue_wait_ms=%.1f stt_ms=%.1f post_speech_ms=%.1f",
-            user_id,
-            t_enqueued,
-            t_worker_start,
-            t_done,
-            queue_wait_ms,
-            stt_ms,
-            post_speech_ms,
-        )
-        self.on_event(
-            {
-                "type": "stt_latency",
-                "user_id": user_id,
-                "queue_wait_ms": round(queue_wait_ms, 1),
-                "stt_ms": round(stt_ms, 1),
-                "post_speech_ms": round(post_speech_ms, 1),
-                "t": t_done,
-            }
-        )
-
     async def _on_stream_partial(self, user_id: str, text: str) -> None:
         """Mid-speech hypothesis: ephemeral transcript event, no dispatch."""
         self.on_event(
@@ -501,17 +339,12 @@ class SessionEngine:
     ) -> None:
         """Server-VAD-endpointed committed segment: full utterance path.
 
-        Converges on the same tail as batch STT: §7a JIT attribution against
-        mic-state (no diarization — dead per owner), lexicon correction,
+        §7a JIT attribution against mic-state, lexicon correction,
         transcript event, fast-lane dispatch.
         """
         if not text.strip():
             return
         t_dispatch = time.monotonic()
-        # One final received proves streaming is alive for this user; the
-        # batch twin (if still in flight) is suppressed by window-dedup in
-        # _publish_and_dispatch.
-        self._stream_last_final[user_id] = t_dispatch
         groups = self._attribute(user_id, [], text, t_start, t_end)
         await self._publish_and_dispatch(groups)
         post_speech_ms = (time.monotonic() - t_end) * 1000.0
@@ -532,65 +365,15 @@ class SessionEngine:
             }
         )
 
-    async def transcribe_pcm(
-        self,
-        user_id: str,
-        pcm: bytes,
-        t_start: float,
-        t_end: float,
-    ) -> list[Utterance]:
-        """STT one clipped utterance and attribute every emitted line.
-
-        §7a: when a SpeakingTracker is wired (live mixed capture), pyannote
-        segment windows are joined against gateway speaking windows so each
-        transcript line carries the *named* speaker's user_id instead of the
-        stream's anonymous ``browser_mixed`` label. Without a tracker (per-user
-        sources, replay tests) the source identity is kept verbatim.
-        """
-        if not pcm:
-            return []
-        wav = _wav_bytes(pcm, sample_rate=self.cfg.stt_pipeline.sample_rate)
-        prompt = self._hotword_prompt or None
-        try:
-            raw, segments = await self._stt_with_segments(wav, prompt)
-        except Exception as exc:
-            self.on_event(
-                {
-                    "type": "transcript_error",
-                    "user_id": user_id,
-                    "error": f"{type(exc).__name__}: {exc}",
-                    "t": t_end,
-                }
-            )
-            return []
-        groups = self._attribute(user_id, segments, raw or "", t_start, t_end)
-        return await self._publish_and_dispatch(groups)
-
     async def _publish_and_dispatch(
         self, groups: list[AttributedSegment]
     ) -> list[Utterance]:
-        """Shared STT tail: dedup, lexicon-correct, publish, feed the fast lane.
-
-        Both paths converge here — batch ``transcribe_pcm`` and streaming
-        finals. When streaming is armed the same speech can arrive from
-        both sides; the first dispatch wins and a late twin overlapping a
-        recent window by >50% is dropped. The check and the window append
-        contain no awaits, so the event loop cannot interleave the two
-        callers between them.
-        """
+        """Streaming-final tail: lexicon-correct, publish, feed the fast lane."""
         utterances: list[Utterance] = []
         for g in groups:
             corrected, _spans = correct_text(g.text, self.entries)
             if not corrected.strip():
                 continue
-            if self._streaming and self._is_twin(g.user_id, g.t_start, g.t_end):
-                logger.info(
-                    "stt-dedup: dropping twin user=%s text=%.40r",
-                    g.user_id,
-                    corrected,
-                )
-                continue
-            self._note_window(g.user_id, g.t_start, g.t_end)
             event: dict[str, Any] = {
                 "type": "transcript",
                 "user_id": g.user_id,
@@ -612,73 +395,6 @@ class SessionEngine:
             await self.handle_utterance(utter)
         return utterances
 
-    # Dedup horizon: a batch twin can lag the streaming final by at most
-    # (VAD silence + batch STT time); 10 s covers measured worst-case 3.6 s.
-    _TWIN_HORIZON_S = 10.0
-
-    def _is_twin(self, user_id: str, t_start: float, t_end: float) -> bool:
-        """True when this window overlaps an already-dispatched one >50%.
-
-        Overlap is measured against the shorter window so a streaming
-        segment that bisects one batch window counts as its twin either way.
-        """
-        now = time.monotonic()
-        kept: list[tuple[float, float]] = []
-        dup = False
-        for w_start, w_end in self._recent_finals.get(user_id, []):
-            if now - w_end > self._TWIN_HORIZON_S:
-                continue  # prune stale
-            kept.append((w_start, w_end))
-            if dup:
-                continue
-            overlap = min(t_end, w_end) - max(t_start, w_start)
-            shorter = min(t_end - t_start, w_end - w_start)
-            if shorter > 0 and overlap / shorter > 0.5:
-                dup = True
-        self._recent_finals[user_id] = kept
-        return dup
-
-    def _note_window(self, user_id: str, t_start: float, t_end: float) -> None:
-        q = self._recent_finals.setdefault(user_id, [])
-        q.append((t_start, t_end))
-        if len(q) > 12:
-            del q[: len(q) - 12]
-
-    def _attribution_active(self) -> bool:
-        """Diarize only when there is something to join the segments against.
-
-        pyannote segments are consumed solely by the §7a join with the
-        SpeakingTracker's windows; running diarization with an empty tracker
-        buys the live path 1-2 s of GPU latency and zero identity (measured
-        on the real whisperx endpoint: 3.6 s vs ~1.5 s per utterance).
-        """
-        tracker = self.speaking_tracker
-        if tracker is None:
-            return False
-        snap = getattr(tracker, "snapshot", None)
-        if not callable(snap):
-            return True
-        try:
-            state = snap()
-        except Exception:
-            return False
-        return bool(state.get("active")) or int(state.get("history_len", 0)) > 0
-
-    async def _stt_with_segments(
-        self, wav: bytes, prompt: str | None
-    ) -> tuple[str, list[dict[str, Any]]]:
-        """One STT call: (text, diarized segments); segments empty when the
-        gateway or config can't provide them."""
-        td = getattr(self.gw, "transcribe_diarized", None)
-        if (
-            callable(td)
-            and getattr(self.cfg.models.stt, "diarize", False)
-            and self._attribution_active()
-        ):
-            return await td(wav, prompt=prompt)
-        raw = await self.gw.transcribe(wav, prompt=prompt)
-        return raw, []
-
     def _attribute(
         self,
         user_id: str,
@@ -687,7 +403,12 @@ class SessionEngine:
         t_start: float,
         t_end: float,
     ) -> list[AttributedSegment]:
-        """Join diarized segments (or the whole window) with speaking events."""
+        """Join speaker segments (or the whole window) with speaking events.
+
+        Streaming finals carry no speaker turns today, so segments is
+        empty and the whole window is attributed against mic-state; the
+        segment join stays for a future server that emits speaker turns.
+        """
         tracker = self.speaking_tracker
         if tracker is None:
             return [
@@ -712,8 +433,8 @@ class SessionEngine:
         """Schedule a pool job without blocking the caller on its completion.
 
         Cards arrive through the event bus; the caller (an HTTP query handler
-        or a per-user STT worker) must not sit waiting on a 60-second agent
-        run. The `entered` handshake guarantees the job is queued before this
+        or the streaming-final path) must not sit waiting on a 60-second
+        agent run. The `entered` handshake guarantees the job is queued before this
         returns, so ``pool.drain()`` callers never race an un-started submit.
         """
         entered = asyncio.Event()
@@ -1096,26 +817,19 @@ class SessionEngine:
                 self._emit_scene(verdict.get("text", ""), "monitor")
 
     async def consume_source(self, source: AudioSource) -> None:
-        """Stream an AudioSource through the VAD, enqueuing each utterance for STT.
+        """Push an AudioSource's PCM to the streaming STT server.
 
         Audio is assumed to arrive as 16 kHz mono int16 PCM (PcmChunk.sample_rate
         must match cfg.stt_pipeline.sample_rate; no resampling is performed).
 
-        The chunk loop does only VAD feeding and a non-blocking enqueue; STT,
-        trigger classification, and agent work all run on the per-user worker
-        queue. Intake handler time per chunk is measured and logged so a
+        The chunk loop does only the adapter feed; the server's own VAD
+        endpoints segments and committed finals arrive via _on_stream_final.
+        Intake handler time per chunk is measured and logged so a
         regression to inline awaits (SPEC §14 defect, 2026-09-05 audit) shows
         up immediately in the session log and ``intake_stats()``.
         """
-        sp = self.cfg.stt_pipeline
-        segmenter = UtteranceSegmenter(
-            sample_rate=sp.sample_rate,
-            silence_ms=sp.silence_ms,
-            min_utterance_ms=sp.min_utterance_ms,
-        )
-        buffers: dict[str, bytearray] = {}
-        offsets: dict[str, int] = {}
         intake_chunks = 0
+        intake_unfed = 0
         intake_work_max_ms = 0.0
         intake_work_total_ms = 0.0
         intake_t0 = time.monotonic()
@@ -1125,42 +839,17 @@ class SessionEngine:
                 t_work0 = time.monotonic()
                 user_id = chunk.user_id
                 if self._capture_paused:
-                    # Pause-capture (SPEC §15): audio is dropped, not buffered.
-                    # Any half-open VAD utterance is discarded so resume never
-                    # stitches speech across the pause boundary.
-                    buffers.pop(user_id, None)
-                    offsets.pop(user_id, None)
-                    segmenter.drop_user(user_id)
+                    # Pause-capture (SPEC §15): audio is dropped, not fed, so
+                    # resume never stitches speech across the pause boundary.
+                    # The user's server session idles out on its own.
                     continue
-                buf = buffers.setdefault(user_id, bytearray())
-                offsets.setdefault(user_id, 0)
-                buf.extend(chunk.samples)
-
-                # Streaming STT runs ALONGSIDE the batch path: the same PCM
-                # goes to the SimulStreaming server, whose VAD finals feed
-                # the fast lane ~2-3 s earlier than batch STT would. When a
-                # streaming final lands (_on_stream_final), the batch window
-                # still in flight is dropped as a duplicate; until then the
-                # batch queue is the safety net (server dead -> batch owns
-                # everything).
-                if self._streaming and self._stt_adapter is not None:
-                    fed = await self._stt_adapter.feed(user_id, chunk.samples)
-                    if not fed:
-                        # The adapter never raises; a False means the TCP
-                        # connect failed. Keep streaming armed (the adapter
-                        # reopens per-feed with its own backoff), and let
-                        # the batch queue cover the gap — dedup drops the
-                        # streaming twin if both produce text.
-                        pass
-
-                utts = segmenter.feed(user_id, chunk.samples, chunk.t_mono)
-                for u in utts:
-                    cur_len = len(buf)
-                    audio = bytes(buf[offsets[user_id] : cur_len])
-                    offsets[user_id] = cur_len
-                    if not audio:
-                        continue
-                    self._stt_queue.enqueue(user_id, audio, u)
+                # The adapter never raises; False means the server is
+                # unreachable (reconnect is backoff-throttled inside feed).
+                # There is no fallback — the stt_health monitor owns the
+                # degraded banner — so unfed audio is counted, not queued.
+                fed = await self._stt_adapter.feed(user_id, chunk.samples)
+                if not fed:
+                    intake_unfed += 1
                 work_ms = (time.monotonic() - t_work0) * 1000.0
                 intake_chunks += 1
                 intake_work_total_ms += work_ms
@@ -1169,37 +858,29 @@ class SessionEngine:
                 if work_ms > _INTAKE_BLOCK_WARN_MS:
                     logger.warning(
                         "intake stalled: chunk handler took %.1f ms "
-                        "(STT must run on the worker queue, not inline)",
+                        "(streaming feed must stay a bounded socket write)",
                         work_ms,
                     )
         finally:
-            for user_id, buf in buffers.items():
-                cur_len = len(buf)
-                tail = bytes(buf[offsets[user_id] : cur_len])
-                if not tail:
-                    segmenter.flush_user(user_id)
-                    continue
-                flush_utts = segmenter.flush_user(user_id)
-                if not flush_utts:
-                    continue
-                u = flush_utts[0]
-                self._stt_queue.enqueue(user_id, tail, u)
             self._intake_stats = {
                 "chunks": intake_chunks,
+                "unfed": intake_unfed,
                 "max_work_ms": round(intake_work_max_ms, 3),
                 "total_work_ms": round(intake_work_total_ms, 3),
                 "wall_ms": round((time.monotonic() - intake_t0) * 1000.0, 3),
             }
             logger.info(
-                "intake-stats chunks=%d max_work_ms=%.3f total_work_ms=%.3f "
-                "wall_ms=%.3f (intake blocks on no await; STT ran on the "
-                "per-user worker queue)",
+                "intake-stats chunks=%d unfed=%d max_work_ms=%.3f "
+                "total_work_ms=%.3f wall_ms=%.3f",
                 intake_chunks,
+                intake_unfed,
                 intake_work_max_ms,
                 intake_work_total_ms,
                 self._intake_stats["wall_ms"],
             )
-            await self._stt_queue.drain()
+            # End of source: close every stream so the server endpoints any
+            # trailing speech and the finals drain before the pool does.
+            await self._stt_adapter.close_all()
             drain = getattr(self.pool, "drain", None)
             if drain is not None:
                 try:
@@ -1208,7 +889,7 @@ class SessionEngine:
                     pass
 
     async def aclose(self) -> None:
-        """Tear down the per-user STT workers and drop any pending work (shutdown)."""
+        """Close streaming sessions and drop any pending work (shutdown)."""
         for task in list(self._prefetch_tasks):
             task.cancel()
         for task in list(self._prefetch_tasks):
@@ -1217,11 +898,9 @@ class SessionEngine:
             except (asyncio.CancelledError, Exception):
                 pass
         self._prefetch_tasks.clear()
-        if self._stt_adapter is not None:
-            await self._stt_adapter.close_all()
+        await self._stt_adapter.close_all()
         if self._openjev_gate is not None:
             await self._openjev_gate.aclose()
-        await self._stt_queue.close()
         for task in list(self._pending_submits):
             task.cancel()
         self._pending_submits.clear()

@@ -32,7 +32,7 @@ PLAN = {
     "saved": {
         "synthesis": {"base_url": "", "model_id": "", "has_api_key": False},
         "jev": {"base_url": ""},
-        "stt": {"mode": "remote", "dialect": "openai", "base_url": "", "has_api_key": False},
+        "stt": {"mode": "remote", "stream_host": "", "stream_port": "43007"},
         "discord": {"has_token": False, "guild_id": "", "dm_user_id": ""},
     },
     "wanted": ["jev-model"],
@@ -100,7 +100,8 @@ def test_setup_wizard_three_steps() -> None:
             page.locator("#in-disc-guild").fill("111")
             page.locator("#in-syn-base").fill("http://llm:8080/v1")
             page.locator("#in-syn-model").fill("m-test")
-            page.locator("#in-stt-base").fill("http://stt:9999")
+            page.locator("#in-stt-host").fill("192.168.0.50")
+            page.locator("#in-stt-port").fill("43007")
             page.screenshot(path=str(shots / "s2_credentials.png"))
 
             # Save & Continue: payload shape verified through the stub.
@@ -112,7 +113,8 @@ def test_setup_wizard_three_steps() -> None:
             assert saved["synthesisRemote"]["model_id"] == "m-test"
             assert "jevRemote" not in saved, "jev local: no remote payload"
             assert saved["stt"]["mode"] == "remote"
-            assert saved["stt"]["base_url"] == "http://stt:9999"
+            assert saved["stt"]["stream_host"] == "192.168.0.50"
+            assert saved["stt"]["stream_port"] == "43007"
             page.screenshot(path=str(shots / "s3_install.png"))
             page.close()
     finally:

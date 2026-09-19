@@ -32,14 +32,9 @@ models:
     # api_key: ...
     # model_id: ...
     enabled: false
-  stt:                           # OpenAI /v1/audio/transcriptions dialect
-    base_url: http://localhost:8081/v1
-    api_key: ${LLM_API_KEY}
-    extra_body: {}
-    dialect: openai              # openai | whisperx (POST /transcribe)
-    diarize: true                # whisperx: pyannote speaker segments (feeds
-                                 # §7a per-speaker attribution)
-    align: false                 # whisperx: word timestamps (unused; extra latency)
+  stt:                           # streaming-only: SimulStreaming whisper TCP server
+    stream_host: 127.0.0.1      # local = provisioned sidecar; remote = your server's host
+    stream_port: 43007          # whisper_online_server.py listen port
   embeddings:
     provider: local              # local | endpoint
     model_id: BAAI/bge-small-en-v1.5

@@ -768,7 +768,7 @@
     syn_base: 'cfg-syn-base', syn_model: 'cfg-syn-model', syn_key: 'cfg-syn-key', syn_extra: 'cfg-syn-extra',
     syn_provider: 'cfg-syn-provider', jev_provider: 'cfg-jev-provider', jev_base: 'cfg-jev-base',
     fast_base: 'cfg-fast-base', fast_model: 'cfg-fast-model', fast_key: 'cfg-fast-key', fast_extra: 'cfg-fast-extra',
-    stt_base: 'cfg-stt-base', stt_dialect: 'cfg-stt-dialect', stt_key: 'cfg-stt-key', stt_extra: 'cfg-stt-extra',
+    stt_host: 'cfg-stt-host', stt_port: 'cfg-stt-port',
     emb_provider: 'cfg-emb-provider', emb_model: 'cfg-emb-model', emb_key: 'cfg-emb-key',
     ag_timeout: 'cfg-agent-timeout', ag_max: 'cfg-agent-maxcalls', ag_eph: 'cfg-agent-ephcalls',
     ag_web: 'cfg-agent-webtimeout', ag_cad: 'cfg-agent-cadence', ag_look: 'cfg-agent-lookback',
@@ -810,7 +810,7 @@
       setCheck('d_mute', d.self_mute); setCheck('d_deaf', d.self_deaf);
       set('syn_base', sy.base_url); set('syn_model', sy.model_id); setSecret('syn_key', sy.api_key); setExtra('syn_extra', sy.extra_body);
       set('fast_base', fa.base_url); set('fast_model', fa.model_id); setSecret('fast_key', fa.api_key); setExtra('fast_extra', fa.extra_body);
-      set('stt_base', st.base_url); set('stt_dialect', st.dialect || 'openai'); setSecret('stt_key', st.api_key); setExtra('stt_extra', st.extra_body);
+      set('stt_host', st.stream_host); setNum('stt_port', st.stream_port);
       set('emb_provider', em.provider || 'local'); set('emb_model', em.model_id); setSecret('emb_key', em.api_key);
       setNum('ag_timeout', a.agent_timeout_s); setNum('ag_max', a.max_tool_calls); setNum('ag_eph', a.ephemeral_max_tool_calls);
       setNum('ag_web', a.web_timeout_s); setNum('ag_cad', a.monitor_cadence_s); setNum('ag_look', a.monitor_lookback);
@@ -852,7 +852,6 @@
     };
     const synExtra = getExtra('syn_extra'); if (synExtra === null) return null;
     const fastExtra = getExtra('fast_extra'); if (fastExtra === null) return null;
-    const sttExtra = getExtra('stt_extra'); if (sttExtra === null) return null;
     // Synthesis + JEV route through /api/desktop/providers (live apply, no
     // restart); everything else goes through /api/config (restart to apply).
     const synPatch = { provider: get('syn_provider') || 'remote', extra_body: synExtra };
@@ -872,7 +871,7 @@
         },
         models: {
           fast: { base_url: get('fast_base') || null, model_id: get('fast_model') || null, api_key: getSecret('fast_key'), extra_body: fastExtra },
-          stt: { base_url: get('stt_base') || null, dialect: get('stt_dialect') || 'openai', api_key: getSecret('stt_key'), extra_body: sttExtra },
+          stt: { stream_host: get('stt_host') || null, stream_port: getNum('stt_port') },
           embeddings: { provider: get('emb_provider') || 'local', model_id: get('emb_model') || null, api_key: getSecret('emb_key') },
         },
         agent: {

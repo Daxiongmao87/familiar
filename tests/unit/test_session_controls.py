@@ -26,11 +26,6 @@ from dmd.types import Card, Utterance
 class _Gw:
     def __init__(self, reply: str = "hello there") -> None:
         self._reply = reply
-        self.stt_calls = 0
-
-    async def transcribe(self, wav: bytes, **kw: Any) -> str:
-        self.stt_calls += 1
-        return self._reply
 
 
 class _SpyPool:
@@ -50,7 +45,7 @@ def _engine(tmp_path: Any, gw: Any, pool: Any, events: list[dict]) -> SessionEng
             "project": {"path": str(tmp_path)},
             "models": {
                 "synthesis": {"base_url": "http://fake", "model_id": "m"},
-                "stt": {"base_url": "http://fake"},
+                "stt": {"stream_host": "127.0.0.1", "stream_port": 1},
             },
         }
     )
@@ -101,20 +96,22 @@ def _pcm_chunks(user_id: str, n: int, t0: float) -> list[Any]:
 
 
 async def test_pause_capture_drops_audio_and_resumes(tmp_path: Any) -> None:
+    # STT points at a dead port: paused audio must never even reach the
+    # adapter (unfed stays 0); resumed audio is fed (and counted unfed).
     events: list[dict] = []
-    gw = _Gw("I search the body")
-    engine = _engine(tmp_path, gw, _SpyPool(), events)
+    engine = _engine(tmp_path, _Gw(), _SpyPool(), events)
 
     engine.set_capture_paused(True)
     src = _ListSource(_pcm_chunks("u", 3, time.monotonic()))
     await engine.consume_source(src)  # type: ignore[arg-type]
-    assert gw.stt_calls == 0, "STT ran while capture was paused"
+    assert engine.intake_stats()["unfed"] == 0, "audio fed while paused"
     assert any(e["type"] == "capture_state" and e["paused"] for e in events)
 
     engine.set_capture_paused(False)
     src2 = _ListSource(_pcm_chunks("u", 3, time.monotonic()))
     await engine.consume_source(src2)  # type: ignore[arg-type]
-    assert gw.stt_calls >= 1, "STT did not resume after un-pausing"
+    assert engine.intake_stats()["unfed"] == 4, "audio not fed after resume"
+    await engine.aclose()
 
 
 # -- engine: OOC gate --------------------------------------------------------
@@ -303,7 +300,7 @@ def test_pool_drop_is_published_not_silent() -> None:
             "project": {"path": "/tmp"},
             "models": {
                 "synthesis": {"base_url": "http://fake", "model_id": "m"},
-                "stt": {"base_url": "http://fake"},
+                "stt": {},
             },
             "orchestration": {"max_concurrent": 1, "job_timeout_s": 0.05},
         }

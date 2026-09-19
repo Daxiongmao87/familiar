@@ -1,20 +1,20 @@
-"""§7a per-speaker attribution: join diarized segments to named speakers.
+"""§7a per-speaker attribution: join transcript windows to named speakers.
 
 The live capture is one mixed audio stream (DAVE per-user RTP is Phase 0 and
 stays deferred by design), so speaker identity is recovered by a two-source
 join — the owner-ordered design:
 
-  * pyannote (WhisperX ``diarize=true``) segments the mixed audio into
-    anonymous speaker windows relative to the clip start;
+  * the streaming STT server endpoints the mixed audio into transcript
+    windows (whole-utterance; no speaker turns today);
   * the Discord gateway's ``member_speaking_state_update`` events feed a
     :class:`~dmd.speaking_tracker.SpeakingTracker` of per-user speaking
     windows on the session's monotonic clock.
 
-Attributing one diarized segment means mapping its clip-relative window to
-absolute time (utterance start + segment offset) and picking the user whose
-speaking window overlaps it the most. Segments with no overlapping speaking
-window keep the source's fallback identity, so attribution can only refine
-identity, never invent it.
+Attributing one window means picking the user whose speaking window
+overlaps it the most. Windows with no overlapping speaking window keep
+the source's fallback identity, so attribution can only refine identity,
+never invent it. The segment-level join (``attribute_segments``) stays
+for a future server that emits speaker turns.
 """
 
 from __future__ import annotations

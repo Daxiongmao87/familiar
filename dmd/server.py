@@ -452,7 +452,6 @@ def create_app(
         "discord.token",
         "models.synthesis.api_key",
         "models.fast.api_key",
-        "models.stt.api_key",
         "models.embeddings.api_key",
         "models.vision.api_key",
     )
@@ -737,12 +736,19 @@ def _build_status_provider(
                 entities = 0
         roles: dict[str, bool] = {}
         if gateway is not None:
-            for role in ("synthesis", "fast", "vision", "stt"):
+            for role in ("synthesis", "fast", "vision"):
                 try:
                     ep = gateway._resolve(role)
                     roles[role] = bool(getattr(ep, "base_url", None))
                 except Exception:
                     roles[role] = False
+            try:
+                stt = gateway.cfg.models.stt
+                roles["stt"] = bool(
+                    getattr(stt, "stream_host", None)
+                ) and bool(getattr(stt, "stream_port", None))
+            except Exception:
+                roles["stt"] = False
         else:
             roles = {"synthesis": False, "fast": False, "vision": False, "stt": False}
         out: dict[str, Any] = {

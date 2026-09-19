@@ -5,7 +5,7 @@ member_speaking_state_update events even while DAVE audio decrypt is
 broken, so this tracker works in the DAVE-broken world.
 
 The tracker is the voice-gateway side of §7a attribution: its per-user
-speaking windows are joined against pyannote diarization segment windows by
+speaking windows are joined against streaming transcript windows by
 ``dmd.attribution`` to name the speakers on a mixed audio capture.
 """
 

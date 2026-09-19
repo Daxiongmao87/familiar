@@ -129,38 +129,77 @@ def test_mock_embeddings_are_stable(stack) -> None:
     assert a != c
 
 
-def test_stt_script_endpoint_feeds_transcriptions(stack) -> None:
-    """Scripted phrase flows out of the mock STT endpoint via a fresh Gateway.
-
-    Engine-level transcription+correction composition is pinned by the
-    regression golden; here we pin the endpoint dialect itself.
+def test_streaming_final_flows_through_stack_engine(stack) -> None:
+    """A scripted final from a fake streaming TCP server flows through
+    consume_source on the fully wired stack engine and lands on the bus
+    as a transcript (then through the fast lane to a mock-backed card).
     """
     import asyncio
+    import json
+    import time
 
-    from dmd.config import load_config_dict
-    from dmd.gateway import Gateway
+    from dmd.types import PcmChunk
 
-    r = httpx.post(
-        f"{stack.mock_url}/_mock/stt_script",
-        json={"texts": ["I search the body"]},
-        timeout=5,
-    )
-    assert r.json() == {"queued": 1}
+    async def _fake_server(reader, writer) -> None:
+        total = 0
+        fired = False
+        while True:
+            data = await reader.read(65536)
+            if not data:
+                break
+            total += len(data)
+            if not fired and total >= 10240:
+                fired = True
+                line = {"text": "I search the body", "start": 0.0, "end": 0.5,
+                        "is_final": True}
+                writer.write((json.dumps(line) + "\n").encode())
+                await writer.drain()
+                try:
+                    writer.write_eof()
+                except (OSError, RuntimeError, NotImplementedError):
+                    pass
+        writer.close()
 
-    cfg = load_config_dict(
-        {
-            "models": {
-                "synthesis": {"base_url": stack.mock_url, "model_id": "mock-synthesis"},
-                "stt": {"base_url": stack.mock_url},
-            }
-        }
-    )
+    class _ListSource:
+        def __init__(self, chunks):
+            self._chunks = list(chunks)
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if not self._chunks:
+                raise StopAsyncIteration
+            return self._chunks.pop(0)
 
     async def _run():
-        gw = Gateway(cfg)
+        server = await asyncio.start_server(_fake_server, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        engine = stack.engine
+        adapter = engine._stt_adapter
+        old_host, old_port = adapter.host, adapter.port
+        adapter.host, adapter.port = "127.0.0.1", port
+        seen: list[dict] = []
+        old_emit = engine.on_event
+        engine.on_event = lambda e: (seen.append(e), old_emit(e))
         try:
-            return await gw.transcribe(b"\x00\x00" * 320)
+            speech = b"\x40\x0f" * 3200
+            t0 = time.monotonic()
+            chunks = [
+                PcmChunk(user_id="dm", samples=speech, sample_rate=16000,
+                         t_mono=t0 + 0.1 * k)
+                for k in range(3)
+            ]
+            await engine.consume_source(_ListSource(chunks))
         finally:
-            await gw.aclose()
+            engine.on_event = old_emit
+            adapter.host, adapter.port = old_host, old_port
+            server.close()
+            await server.wait_closed()
+        return seen
 
-    assert asyncio.run(_run()) == "I search the body"
+    seen = asyncio.run(_run())
+    transcripts = [e for e in seen if e["type"] == "transcript"]
+    assert [(t["user_id"], t["text"]) for t in transcripts] == [
+        ("dm", "I search the body")
+    ]
