@@ -62,6 +62,10 @@ class SynthesisRole(EndpointConfig):
     """Generation role endpoint; must name a model_id."""
 
     model_id: str  # required for generation roles
+    # Inference provider: "remote" (base_url as configured) or "local"
+    # (the Electron inference bridge; base_url is kept and reused when
+    # the user switches back, cached models are never deleted).
+    provider: str = "remote"
 
 
 class FastRole(SynthesisRole):
@@ -192,6 +196,9 @@ class OpenjevConfig(BaseModel):
     """Openjev decision gate (binary deploy/wait trigger, no taxonomy)."""
 
     enabled: bool = False  # off = legacy regex + fast-LLM trigger path
+    # Inference provider: "remote" (base_url as configured) or "local"
+    # (the bundled JEV sidecar at desktop.jev_local_url, identical /score).
+    provider: str = "remote"
     base_url: str = "http://127.0.0.1:8199"  # openjev-serve endpoint
     threshold: float = 0.5  # P(deploy) at or above this deploys a worker
     timeout_s: float = 3.0  # per scoring call; failures fail closed to wait
@@ -246,6 +253,23 @@ class ServerConfig(BaseModel):
     shutdown_timeout_s: float = 10.0
 
 
+class DesktopConfig(BaseModel):
+    """Local-provider endpoints owned by the Electron desktop shell.
+
+    Python never dials WebGPU or model files directly; local inference
+    is always reached through these localhost URLs, so the desktop
+    runtime can be supervised, restarted, or degraded without Python
+    knowing any implementation detail.
+    """
+
+    enabled: bool = False  # true when running under the Electron shell
+    # OpenAI-compatible bridge (Electron WebLLM worker): chat/completions.
+    bridge_url: str = "http://127.0.0.1:8791"
+    # Bundled JEV sidecar (openjev-serve wire protocol): /score + /health.
+    # 8299, not 8199: a user-run remote scorer may already hold 8199.
+    jev_local_url: str = "http://127.0.0.1:8299"
+
+
 class AppConfig(BaseModel):
     """Top-level application configuration model."""
 
@@ -258,6 +282,7 @@ class AppConfig(BaseModel):
     openjev: OpenjevConfig = OpenjevConfig()
     discord: DiscordConfig = DiscordConfig()
     server: ServerConfig = ServerConfig()
+    desktop: DesktopConfig = DesktopConfig()
 
 
 def load_config(path: str) -> AppConfig:

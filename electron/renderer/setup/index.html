@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Setting up Familiar</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="setup">
+    <h1>Setting up Familiar</h1>
+    <p class="sub" id="step-sub">Step 1 of 3 — providers and downloads.</p>
+    <div id="forced-banner" class="forced" hidden></div>
+
+    <section id="step1">
+      <div class="providers" aria-label="provider choice">
+        <div class="prov">
+          <span class="prov-label">Synthesis provider</span>
+          <label><input type="radio" name="synth" value="local" checked> Local</label>
+          <label><input type="radio" name="synth" value="remote"> OpenAI-compatible endpoint</label>
+        </div>
+        <p id="synth-req" class="req" hidden></p>
+        <div class="prov">
+          <span class="prov-label">JEV provider</span>
+          <label><input type="radio" name="jev" value="local" checked> Local</label>
+          <label><input type="radio" name="jev" value="remote"> JEV endpoint</label>
+        </div>
+        <p id="jev-req" class="req" hidden></p>
+        <p class="hint">Remote modes need no downloads and keep working when this machine
+          can't run local models. Switching later never deletes cached models.</p>
+      </div>
+
+      <section class="hw" aria-label="hardware">
+        <span id="hw-line" class="hw-line">Checking GPU/WebGPU capability…</span><br>
+        <span id="cuda-line" class="hw-line">Checking NVIDIA CUDA…</span>
+      </section>
+
+      <section aria-label="components">
+        <ul id="comp-list" class="comp-list"></ul>
+      </section>
+    </section>
+
+    <section id="step2" hidden>
+      <div class="cred" aria-label="discord credentials">
+        <h2>Discord <span class="soft">(recommended, skippable)</span></h2>
+        <p class="hint">Lets Familiar follow you into voice and label who is speaking.
+          Without it, transcription still works; speaker names are guessed.</p>
+        <label>Bot token <input id="in-disc-token" type="password" autocomplete="off" placeholder="blank = skip"></label>
+        <div class="row">
+          <label>Server (guild) ID <input id="in-disc-guild" type="text" autocomplete="off"></label>
+          <label>DM user ID <input id="in-disc-dm" type="text" autocomplete="off"></label>
+        </div>
+      </div>
+      <div class="cred" id="sec-syn-remote" aria-label="synthesis endpoint" hidden>
+        <h2>Synthesis endpoint</h2>
+        <label>Base URL <input id="in-syn-base" type="text" autocomplete="off" placeholder="http://host:port/v1"></label>
+        <div class="row">
+          <label>Model ID <input id="in-syn-model" type="text" autocomplete="off"></label>
+          <label>API key <input id="in-syn-key" type="password" autocomplete="off" placeholder="blank = keep"></label>
+        </div>
+      </div>
+      <div class="cred" id="sec-jev-remote" aria-label="JEV endpoint" hidden>
+        <h2>JEV endpoint</h2>
+        <label>Base URL <input id="in-jev-base" type="text" autocomplete="off" placeholder="http://host:8199"></label>
+      </div>
+      <div class="cred" aria-label="speech recognition">
+        <h2>Speech recognition</h2>
+        <div class="prov">
+          <label><input type="radio" name="sttmode" value="local"> Local server</label>
+          <label><input type="radio" name="sttmode" value="remote"> Remote endpoint</label>
+        </div>
+        <p id="stt-req" class="req" hidden></p>
+        <div id="stt-remote-fields" hidden>
+          <div class="row">
+            <label>Dialect
+              <select id="in-stt-dialect">
+                <option value="openai">openai</option>
+                <option value="whisperx">whisperx</option>
+              </select>
+            </label>
+            <label>API key <input id="in-stt-key" type="password" autocomplete="off" placeholder="blank = keep"></label>
+          </div>
+          <label>Base URL <input id="in-stt-base" type="text" autocomplete="off" placeholder="http://host:port"></label>
+        </div>
+      </div>
+    </section>
+
+    <section class="overall" id="overall-sec" aria-label="overall progress" hidden>
+      <div class="overall-row">
+        <span>Overall</span>
+        <span id="overall-pct">0%</span>
+      </div>
+      <div class="bar"><div id="overall-fill" class="fill" style="width: 0%"></div></div>
+      <p id="status-line" class="status">Choose providers, then install.</p>
+    </section>
+
+    <section class="actions">
+      <span id="error-line" class="error" role="alert"></span>
+      <span class="spacer"></span>
+      <button id="btn-back" type="button" hidden>Back</button>
+      <button id="btn-anyway" type="button" hidden>Open anyway</button>
+      <button id="btn-next" type="button">Continue</button>
+      <button id="btn-install" type="button" hidden>Install &amp; Launch</button>
+    </section>
+  </main>
+  <script src="setup.js"></script>
+</body>
+</html>

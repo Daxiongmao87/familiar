@@ -22,6 +22,7 @@
       <span id="stt-health-status" class="stt-health-status" data-testid="stt-health-status" title="STT transcription health"></span>
       <button id="pause-capture" class="ctl-btn" data-testid="pause-capture" type="button" title="Pause or resume audio capture">⏸ Pause</button>
       <button id="ooc-toggle" class="ctl-btn" data-testid="ooc-toggle" type="button" title="Mark the session out-of-character: transcript keeps running, triggers and monitoring pause">OOC</button>
+      <button id="settings-btn" class="ctl-btn" data-testid="settings-btn" type="button" title="Settings">Settings</button>
     </div>
   </header>
   <main class="grid">
@@ -69,10 +70,18 @@
           <div class="model-role">
             <h3>Synthesis (cards, enrichment)</h3>
             <div class="field-grid">
+              <div class="field"><label>Provider</label><select id="cfg-syn-provider" data-testid="cfg-syn-provider"><option value="remote">OpenAI-compatible endpoint</option><option value="local">Local</option></select></div>
               <div class="field"><label>Base URL</label><input id="cfg-syn-base" data-testid="cfg-syn-base" type="text"></div>
               <div class="field"><label>Model ID</label><input id="cfg-syn-model" data-testid="cfg-syn-model" type="text"></div>
               <div class="field"><label>API key</label><input id="cfg-syn-key" data-testid="cfg-syn-key" type="password" autocomplete="off" placeholder="blank = keep current"></div>
               <div class="field wide"><label>Extra body (JSON)</label><textarea id="cfg-syn-extra" data-testid="cfg-syn-extra" rows="2" spellcheck="false"></textarea></div>
+            </div>
+          </div>
+          <div class="model-role">
+            <h3>JEV (deploy gate)</h3>
+            <div class="field-grid">
+              <div class="field"><label>Provider</label><select id="cfg-jev-provider" data-testid="cfg-jev-provider"><option value="remote">JEV endpoint</option><option value="local">Local</option></select></div>
+              <div class="field"><label>Base URL</label><input id="cfg-jev-base" data-testid="cfg-jev-base" type="text"></div>
             </div>
           </div>
           <div class="model-role">

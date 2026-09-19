@@ -170,6 +170,14 @@ class OpenjevGate:
         self._client = client
         self._owns_client = client is None
 
+    def set_base_url(self, base_url: str) -> None:
+        """Repoint the gate at another /score endpoint (provider switch).
+
+        Remote and local JEV speak the identical wire protocol, so only
+        the base URL changes; threshold, timeout, and window are kept.
+        """
+        self._base_url = base_url.rstrip("/")
+
     async def aclose(self) -> None:
         """Release the HTTP client when this gate owns it."""
         if self._owns_client and self._client is not None:

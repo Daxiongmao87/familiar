@@ -161,11 +161,13 @@ def create_app(
     """
     bus = bus or EventBus()
     provider = status_provider or _default_status_provider
-    web_path = (
-        Path(web_dir)
-        if web_dir is not None
-        else Path(__file__).resolve().parent.parent / "web"
-    )
+    if web_dir is not None:
+        web_path = Path(web_dir)
+    elif getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        # PyInstaller one-dir bundle: datas land under the bundle dir.
+        web_path = Path(sys._MEIPASS) / "web"  # type: ignore[attr-defined]
+    else:
+        web_path = Path(__file__).resolve().parent.parent / "web"
     if not web_path.exists():
         web_path.mkdir(parents=True, exist_ok=True)
 
@@ -694,6 +696,21 @@ def create_app(
         except Exception:
             pass
 
+    # Provider status/switching live on every app instance (create_app, not
+    # main) so the settings modal works against any server, including tests.
+    try:
+        from dmd.desktop_api import mount_desktop_api
+
+        mount_desktop_api(
+            app,
+            cfg=cfg,
+            engine=engine,
+            gateway=None,
+            config_path=getattr(cfg, "_config_path", None) if cfg is not None else None,
+        )
+    except Exception:
+        pass
+
     return app
 
 
@@ -951,6 +968,7 @@ def main(config_path: str) -> None:
     engine: Any = None
     init_runner: Any = None
     db_dir: Any = None
+    stt_monitor: Any = None
     bus = EventBus()
 
     try:
@@ -961,7 +979,10 @@ def main(config_path: str) -> None:
             object.__setattr__(cfg, "_config_path", config_path)
         except Exception:
             pass
-    except Exception:
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("config unavailable (%s): degraded mode", exc)
         cfg = None
 
     if cfg is not None:
@@ -983,9 +1004,13 @@ def main(config_path: str) -> None:
 
         try:
             from dmd.gateway import Gateway
+            from dmd.providers import EndpointRouter
 
-            gateway = Gateway(cfg)
-        except Exception:
+            gateway = Gateway(cfg, router=EndpointRouter(cfg))
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("gateway unavailable: %r", exc)
             gateway = None
         if gateway is not None:
             try:

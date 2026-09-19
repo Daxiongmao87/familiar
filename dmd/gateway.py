@@ -43,8 +43,13 @@ class GatewayError(RuntimeError):
 class Gateway:
     """OpenAI-compatible async client keyed by AppConfig roles."""
 
-    def __init__(self, cfg: AppConfig) -> None:
+    def __init__(self, cfg: AppConfig, router: Any = None) -> None:
         self._cfg = cfg
+        # Optional provider router (dmd.providers.EndpointRouter). None
+        # preserves the original behavior exactly: roles resolve straight
+        # from config. A router reroutes synthesis/fast to the local
+        # bridge when those roles select provider "local".
+        self._router = router
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(connect=5.0, read=180.0, write=180.0, pool=5.0)
         )
@@ -58,6 +63,11 @@ class Gateway:
         await self._client.aclose()
 
     def _resolve(self, role: str) -> EndpointConfig:
+        if self._router is not None and role in ("synthesis", "fast"):
+            try:
+                return self._router.resolve(role)
+            except ValueError as exc:
+                raise GatewayError(str(exc)) from exc
         m = self._cfg.models
         if role == "synthesis":
             return m.synthesis

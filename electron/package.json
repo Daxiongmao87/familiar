@@ -1,0 +1,22 @@
+{
+  "name": "familiar-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Familiar desktop shell: Electron host + bundled Python backend + local inference",
+  "desktopName": "Familiar",
+  "main": "main/index.js",
+  "scripts": {
+    "start": "electron .",
+    "start:dev": "FAMILIAR_DEV=1 electron .",
+    "test": "node --test \"installer/__tests__/*.test.js\" \"main/__tests__/*.test.js\"",
+    "bundle:webllm": "node scripts/bundle_webllm.js"
+  },
+  "dependencies": {
+    "@mlc-ai/web-llm": "0.2.85"
+  },
+  "devDependencies": {
+    "electron": "44.4.3",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.25.4"
+  }
+}

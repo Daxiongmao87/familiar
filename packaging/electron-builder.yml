@@ -1,0 +1,47 @@
+# electron-builder configuration for the Familiar AppImage.
+# Build via packaging/build_appimage.sh (it stages extraResources first).
+appId: ai.familiar.desktop
+productName: Familiar
+copyright: Copyright (c) 2026 Familiar contributors
+
+directories:
+  app: ../electron
+  output: ../electron/dist
+
+files:
+  - main/
+  - preload/
+  - renderer/
+  - inference/host.html
+  - inference/host.js
+  - inference/worker.js
+  - inference/vendor/
+  - shared/manifest.json
+  - shared/paths.js
+  - installer/downloader.js
+  - installer/state.js
+  - package.json
+  # Production node_modules only (electron-builder prunes devDeps).
+
+extraResources:
+  # PyInstaller one-dir backend (staged by build_appimage.sh).
+  - from: ../packaging/appimage-work/backend/dist/familiar-backend
+    to: backend
+  # Standalone CPython for sidecar venvs (staged by build_appimage.sh).
+  - from: ../packaging/appimage-work/python
+    to: python
+  # Vendored JEV scorer code (serve.py + _vendored/, no weights).
+  - from: ../services/jev_sidecar/serve.py
+    to: jev_sidecar/serve.py
+  - from: ../services/jev_sidecar/_vendored
+    to: jev_sidecar/_vendored
+  # Seed for the per-user backend config (never the real config.yaml).
+  - from: ../config.example.yaml
+    to: config.example.yaml
+
+linux:
+  target: AppImage
+  category: Utility
+  executableName: Familiar
+  artifactName: Familiar-${version}.AppImage
+  syncDesktopName: true

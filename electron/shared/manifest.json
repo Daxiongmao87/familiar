@@ -1,0 +1,443 @@
+{
+  "manifest_version": 1,
+  "generated_by": "electron/shared/make_manifest.py",
+  "components": [
+    {
+      "id": "stt-server",
+      "label": "Speech recognition server",
+      "kind": "files",
+      "version": "6da90b44b7e5",
+      "source": "github:ufal/whisper_streaming@6da90b44b7e50d79695e68166d2a2c7609c75abb",
+      "install_dir": "stt/server",
+      "requirements": "Bundled Python + faster-whisper env (stt-runtime).",
+      "files": [
+        {
+          "path": "line_packet.py",
+          "url": "https://raw.githubusercontent.com/ufal/whisper_streaming/6da90b44b7e50d79695e68166d2a2c7609c75abb/line_packet.py",
+          "size": 3201
+        },
+        {
+          "path": "silero_vad_iterator.py",
+          "url": "https://raw.githubusercontent.com/ufal/whisper_streaming/6da90b44b7e50d79695e68166d2a2c7609c75abb/silero_vad_iterator.py",
+          "size": 5899
+        },
+        {
+          "path": "whisper_online.py",
+          "url": "https://raw.githubusercontent.com/ufal/whisper_streaming/6da90b44b7e50d79695e68166d2a2c7609c75abb/whisper_online.py",
+          "size": 38837
+        },
+        {
+          "path": "whisper_online_server.py",
+          "url": "https://raw.githubusercontent.com/ufal/whisper_streaming/6da90b44b7e50d79695e68166d2a2c7609c75abb/whisper_online_server.py",
+          "size": 6097
+        }
+      ]
+    },
+    {
+      "id": "stt-runtime",
+      "label": "Speech recognition runtime",
+      "kind": "pip-env",
+      "version": "stt-pins-1",
+      "source": "pypi",
+      "install_dir": "stt/venv",
+      "requirements": "NVIDIA CUDA GPU; network for pip; ~7 GB disk.",
+      "packages": [
+        "faster-whisper==1.2.1",
+        "librosa==1.0.0",
+        "soundfile==0.14.0",
+        "numpy==2.2.6",
+        "torch==2.10.0"
+      ]
+    },
+    {
+      "id": "stt-model",
+      "label": "Speech recognition model",
+      "kind": "files",
+      "version": "0a363e9161cb",
+      "source": "hf:dropbox-dash/faster-whisper-large-v3-turbo@0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+      "install_dir": "stt/model",
+      "requirements": "~1.7 GB disk.",
+      "files": [
+        {
+          "path": "config.json",
+          "url": "https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo/resolve/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/config.json",
+          "size": 2263
+        },
+        {
+          "path": "model.bin",
+          "url": "https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo/resolve/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/model.bin",
+          "size": 1617884929
+        },
+        {
+          "path": "preprocessor_config.json",
+          "url": "https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo/resolve/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/preprocessor_config.json",
+          "size": 340
+        },
+        {
+          "path": "tokenizer.json",
+          "url": "https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo/resolve/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/tokenizer.json",
+          "size": 2710337
+        },
+        {
+          "path": "vocabulary.json",
+          "url": "https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo/resolve/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/vocabulary.json",
+          "size": 1068114
+        }
+      ]
+    },
+    {
+      "id": "synth-model",
+      "label": "MiniCPM5-2B local synthesis model",
+      "kind": "files",
+      "version": "602e6da83b3c",
+      "source": "hf:ozhyhinas/MiniCPM5-2B-q4f16_1-MLC@602e6da83b3c3db304d34439fe968fd65f223e07",
+      "install_dir": "synth/minicpm5-2b-mlc",
+      "requirements": "WebGPU with shader-f16; ~1.5 GB disk.",
+      "files": [
+        {
+          "path": "libs/MiniCPM5-2B-q4f16_1-MLC-webgpu.wasm",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/libs/MiniCPM5-2B-q4f16_1-MLC-webgpu.wasm",
+          "size": 6562687
+        },
+        {
+          "path": "mlc-chat-config.json",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/mlc-chat-config.json",
+          "size": 2158
+        },
+        {
+          "path": "params_shard_0.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_0.bin",
+          "size": 133693440
+        },
+        {
+          "path": "params_shard_1.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_1.bin",
+          "size": 133693440
+        },
+        {
+          "path": "params_shard_10.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_10.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_11.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_11.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_12.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_12.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_13.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_13.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_14.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_14.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_15.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_15.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_16.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_16.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_17.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_17.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_18.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_18.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_19.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_19.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_2.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_2.bin",
+          "size": 33423360
+        },
+        {
+          "path": "params_shard_20.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_20.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_21.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_21.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_22.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_22.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_23.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_23.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_24.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_24.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_25.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_25.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_26.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_26.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_27.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_27.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_28.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_28.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_29.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_29.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_3.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_3.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_30.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_30.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_31.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_31.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_32.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_32.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_33.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_33.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_34.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_34.bin",
+          "size": 31850496
+        },
+        {
+          "path": "params_shard_35.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_35.bin",
+          "size": 32440320
+        },
+        {
+          "path": "params_shard_36.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_36.bin",
+          "size": 32440320
+        },
+        {
+          "path": "params_shard_37.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_37.bin",
+          "size": 32440320
+        },
+        {
+          "path": "params_shard_38.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_38.bin",
+          "size": 32440320
+        },
+        {
+          "path": "params_shard_39.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_39.bin",
+          "size": 33030144
+        },
+        {
+          "path": "params_shard_4.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_4.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_40.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_40.bin",
+          "size": 33030144
+        },
+        {
+          "path": "params_shard_41.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_41.bin",
+          "size": 9785344
+        },
+        {
+          "path": "params_shard_5.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_5.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_6.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_6.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_7.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_7.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_8.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_8.bin",
+          "size": 28311552
+        },
+        {
+          "path": "params_shard_9.bin",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/params_shard_9.bin",
+          "size": 28311552
+        },
+        {
+          "path": "release-manifest.json",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/release-manifest.json",
+          "size": 6690
+        },
+        {
+          "path": "tensor-cache.json",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/tensor-cache.json",
+          "size": 171390
+        },
+        {
+          "path": "tokenizer.json",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/tokenizer.json",
+          "size": 9894271
+        },
+        {
+          "path": "tokenizer_config.json",
+          "url": "https://huggingface.co/ozhyhinas/MiniCPM5-2B-q4f16_1-MLC/resolve/602e6da83b3c3db304d34439fe968fd65f223e07/tokenizer_config.json",
+          "size": 94391
+        }
+      ]
+    },
+    {
+      "id": "jev-model",
+      "label": "Qwen 4B AWQ JEV model",
+      "kind": "files",
+      "version": "32c292e3a73a",
+      "revision": "32c292e3a73afe1138518180b1b6d2868c980ee2",
+      "source": "hf:QuantTrio/Qwen3.5-4B-AWQ@32c292e3a73afe1138518180b1b6d2868c980ee2",
+      "install_dir": "jev/model",
+      "requirements": "NVIDIA CUDA GPU; ~6.1 GB disk.",
+      "files": [
+        {
+          "path": "chat_template.jinja",
+          "url": "https://huggingface.co/QuantTrio/Qwen3.5-4B-AWQ/resolve/32c292e3a73afe1138518180b1b6d2868c980ee2/chat_template.jinja",
+          "size": 7756
+        },
+        {
+          "path": "config.json",
+          "url": "https://huggingface.co/QuantTrio/Qwen3.5-4B-AWQ/resolve/32c292e3a73afe1138518180b1b6d2868c980ee2/config.json",
+          "size": 3032
+        },
+        {
+          "path": "configuration.json",
+          "url": "https://huggingface.co/QuantTrio/Qwen3.5-4B-AWQ/resolve/32c292e3a73afe1138518180b1b6d2868c980ee2/configuration.json",
+          "size": 73
+        },
+        {
+          "path": "generation_config.json",
+          "url": "https://huggingface.co/QuantTrio/Qwen3.5-4B-AWQ/resolve/32c292e3a73afe1138518180b1b6d2868c980ee2/generation_config.json",
+          "size": 303
+        },
+        {
+          "path": "merges.txt",
+          "url": "https://huggingface.co/QuantTrio/Qwen3.5-4B-AWQ/resolve/32c292e3a73afe1138518180b1b6d2868c980ee2/merges.txt",
+          "size": 3353259
+        },
+        {
+          "path": "model-00001-of-00003.safetensors",
+          "url": "https://huggingface.co/QuantTrio/Qwen3.5-4B-AWQ/resolve/32c292e3a73afe1138518180b1b6d2868c980ee2/model-00001-of-00003.safetensors",
+          "size": 2980701464
+        },
+        {
+          "path": "model-00002-of-00003.safetensors",
+          "url": "https://huggingface.co/QuantTrio/Qwen3.5-4B-AWQ/resolve/32c292e3a73afe1138518180b1b6d2868c980ee2/model-00002-of-00003.safetensors",
+          "size": 2991143600
+        },
+        {
+          "path": "model-00003-of-00003.safetensors",
+          "url": "https://huggingface.co/QuantTrio/Qwen3.5-4B-AWQ/resolve/32c292e3a73afe1138518180b1b6d2868c980ee2/model-00003-of-00003.safetensors",
+          "size": 99642624
+        },
+        {
+          "path": "model.safetensors.index.json",
+          "url": "https://huggingface.co/QuantTrio/Qwen3.5-4B-AWQ/resolve/32c292e3a73afe1138518180b1b6d2868c980ee2/model.safetensors.index.json",
+          "size": 84925
+        },
+        {
+          "path": "preprocessor_config.json",
+          "url": "https://huggingface.co/QuantTrio/Qwen3.5-4B-AWQ/resolve/32c292e3a73afe1138518180b1b6d2868c980ee2/preprocessor_config.json",
+          "size": 390
+        },
+        {
+          "path": "tokenizer.json",
+          "url": "https://huggingface.co/QuantTrio/Qwen3.5-4B-AWQ/resolve/32c292e3a73afe1138518180b1b6d2868c980ee2/tokenizer.json",
+          "size": 12807982
+        },
+        {
+          "path": "tokenizer_config.json",
+          "url": "https://huggingface.co/QuantTrio/Qwen3.5-4B-AWQ/resolve/32c292e3a73afe1138518180b1b6d2868c980ee2/tokenizer_config.json",
+          "size": 16710
+        },
+        {
+          "path": "video_preprocessor_config.json",
+          "url": "https://huggingface.co/QuantTrio/Qwen3.5-4B-AWQ/resolve/32c292e3a73afe1138518180b1b6d2868c980ee2/video_preprocessor_config.json",
+          "size": 385
+        },
+        {
+          "path": "vocab.json",
+          "url": "https://huggingface.co/QuantTrio/Qwen3.5-4B-AWQ/resolve/32c292e3a73afe1138518180b1b6d2868c980ee2/vocab.json",
+          "size": 6722759
+        }
+      ]
+    },
+    {
+      "id": "jev-runtime",
+      "label": "OpenJEV runtime",
+      "kind": "pip-env",
+      "version": "openjev-pins-1",
+      "source": "pypi",
+      "install_dir": "jev/venv",
+      "requirements": "NVIDIA CUDA GPU; ~8 GB disk for torch/CUDA wheels.",
+      "packages": [
+        "torch==2.10.0",
+        "transformers==5.17.0",
+        "accelerate==1.15.0",
+        "gptqmodel==7.5.0",
+        "safetensors==0.8.0",
+        "huggingface-hub==1.31.0",
+        "tokenizers==0.23.2",
+        "numpy==2.2.6",
+        "sentencepiece==0.2.1",
+        "protobuf==7.36.1"
+      ]
+    }
+  ]
+}

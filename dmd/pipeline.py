@@ -81,6 +81,22 @@ def _lexicon_prompt(entries: list[LexiconEntry], max_chars: int = 500) -> str:
     return " ".join(parts)
 
 
+def _jev_base_url(cfg: Any, oj_cfg: Any) -> str:
+    """Resolve the JEV gate URL for the configured provider mode.
+
+    Falls back to the remote ``base_url`` when local resolution fails
+    (empty local URL): construction must not kill the backend over a
+    provider typo — the desktop status endpoint reports the mismatch.
+    """
+    try:
+        from .providers import jev_base_url_for
+
+        return jev_base_url_for(cfg)
+    except ValueError:
+        logger.warning("JEV provider misconfigured; falling back to remote base_url")
+        return str(oj_cfg.base_url)
+
+
 def _make_job(
     kind: str,
     ctx: dict,
@@ -274,10 +290,13 @@ class SessionEngine:
         self._prefetch_inflight = 0  # throttle bound for concurrent prefetches
         # Openjev decision gate (binary deploy/wait trigger). Off by default;
         # when disabled the legacy regex + fast-LLM path below is untouched.
+        # The base URL follows the JEV provider mode (remote base_url or the
+        # local sidecar); synthesis needs no equivalent because Gateway
+        # resolves it live through the provider router.
         oj_cfg = getattr(cfg, "openjev", None)
         self._openjev_gate: OpenjevGate | None = (
             OpenjevGate(
-                base_url=oj_cfg.base_url,
+                base_url=_jev_base_url(cfg, oj_cfg),
                 threshold=oj_cfg.threshold,
                 timeout_s=oj_cfg.timeout_s,
                 recent_n=oj_cfg.recent_n,
@@ -359,6 +378,30 @@ class SessionEngine:
     @property
     def ooc(self) -> bool:
         return self._ooc
+
+    def apply_providers(self) -> dict[str, str]:
+        """Repoint inference routing after a provider-mode switch.
+
+        Synthesis/fast follow the Gateway's live router automatically;
+        the JEV gate holds its URL, so it is repointed here. No restart,
+        no rebuild, no model deletion. Returns the effective base URLs.
+        """
+        from .providers import jev_base_url_for, synthesis_endpoint_for
+
+        eff = synthesis_endpoint_for(self.cfg).base_url
+        if self._openjev_gate is not None:
+            try:
+                self._openjev_gate.set_base_url(jev_base_url_for(self.cfg))
+            except ValueError:
+                logger.warning("JEV provider switch failed; gate URL unchanged")
+        return {
+            "synthesis": eff,
+            "jev": (
+                self._openjev_gate._base_url
+                if self._openjev_gate is not None
+                else ""
+            ),
+        }
 
     def refresh_lexicon(self, entries: list[LexiconEntry]) -> dict[str, Any]:
         """Hot-swap the lexicon after an init pass (no restart needed).
