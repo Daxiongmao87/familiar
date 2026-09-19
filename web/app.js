@@ -473,6 +473,20 @@
       }
     })
 
+  fetch('/api/config/health')
+    .then((r) => (r.ok ? r.json() : null))
+    .then((h) => {
+      const banner = document.getElementById('config-banner');
+      if (!banner) return;
+      if (h && h.valid === false) {
+        banner.textContent = 'Config invalid — running degraded. Settings may not apply until this is fixed: ' + (h.detail || 'unknown error');
+        banner.hidden = false;
+      } else {
+        banner.hidden = true;
+      }
+    })
+    .catch(() => {});
+
   setInterval(() => {
     fetch('/api/status')
       .then((r) => (r.ok ? r.json() : null))

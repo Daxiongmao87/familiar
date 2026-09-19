@@ -153,6 +153,7 @@ def create_app(
     browser_source: Any = None,
     speaking_tracker: Any = None,
     config_path: str | Path | None = None,
+    config_error: str | None = None,
 ) -> FastAPI:
     """Build the FastAPI app with optional injected dependencies.
 
@@ -329,11 +330,7 @@ def create_app(
 
     @app.get("/api/guild/members")
     async def api_guild_members() -> dict[str, Any]:
-        if cfg is None:
-            return {"ok": False, "detail": "no config", "members": []}
-        discord_cfg = getattr(cfg, "discord", None)
-        token = getattr(discord_cfg, "token", None) if discord_cfg else None
-        guild_id = getattr(discord_cfg, "guild_id", None) if discord_cfg else None
+        token, guild_id = _discord_creds()
         if not token or not guild_id:
             return {"ok": False, "detail": "discord not configured", "members": []}
         if isinstance(token, str) and token.startswith("${") and token.endswith("}"):
@@ -378,16 +375,21 @@ def create_app(
 
     @app.get("/api/config/dm")
     async def api_get_dm() -> dict[str, Any]:
-        if cfg is None:
-            return {"ok": False, "dm_user_id": None}
-        discord_cfg = getattr(cfg, "discord", None)
-        dm = getattr(discord_cfg, "dm_user_id", None) if discord_cfg else None
-        return {"ok": True, "dm_user_id": dm}
+        try:
+            import yaml
+
+            raw = yaml.safe_load(_config_file().read_text(encoding="utf-8")) or {}
+            dm = ((raw.get("discord") or {}).get("dm_user_id"))
+            return {"ok": True, "dm_user_id": dm}
+        except Exception:
+            if cfg is None:
+                return {"ok": False, "dm_user_id": None}
+            discord_cfg = getattr(cfg, "discord", None)
+            dm = getattr(discord_cfg, "dm_user_id", None) if discord_cfg else None
+            return {"ok": True, "dm_user_id": dm}
 
     @app.post("/api/config/dm")
     async def api_set_dm(req: Request) -> dict[str, Any]:
-        if cfg is None:
-            return {"ok": False, "detail": "no config"}
         try:
             payload = await req.json()
         except Exception:
@@ -399,7 +401,7 @@ def create_app(
             dm_id = dm_id.strip() or None
             if dm_id is not None and not dm_id.isdigit():
                 # treat as username — try to resolve via guild members
-                discord_cfg = getattr(cfg, "discord", None)
+                discord_cfg = getattr(cfg, "discord", None) if cfg is not None else None
                 token = getattr(discord_cfg, "token", None) if discord_cfg else None
                 guild_id = (
                     getattr(discord_cfg, "guild_id", None) if discord_cfg else None
@@ -428,16 +430,15 @@ def create_app(
                     except Exception:
                         pass
         try:
-            cfg.discord.dm_user_id = dm_id  # type: ignore[attr-defined]
+            if cfg is not None:
+                cfg.discord.dm_user_id = dm_id  # type: ignore[attr-defined]
         except Exception:
             pass
         try:
             import yaml
 
-            raw_path = str(getattr(cfg, "_config_path", None) or "config.yaml")
+            raw_path = str(getattr(cfg, "_config_path", None) or config_path or "config.yaml")
             p = Path(raw_path)
-            if not p.exists():
-                p = Path("config.yaml")
             if p.exists():
                 raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
                 if "discord" not in raw:
@@ -506,6 +507,41 @@ def create_app(
         configured = getattr(cfg, "_config_path", None) if cfg is not None else None
         p = Path(str(configured or config_path or "config.yaml"))
         return p
+
+    def _discord_creds() -> tuple[Any, Any]:
+        """Validated cfg first; the persisted file when boot degraded.
+
+        Every DiscordConfig field is optional, so Discord can never be the
+        section that fails validation — gating member loading on unrelated
+        sections (models, ...) wrongly bricks the DM picker on stale configs.
+        """
+        if cfg is not None:
+            discord_cfg = getattr(cfg, "discord", None)
+            if discord_cfg is None:
+                return None, None
+            return (
+                getattr(discord_cfg, "token", None),
+                getattr(discord_cfg, "guild_id", None),
+            )
+        try:
+            import yaml
+
+            disc = (
+                yaml.safe_load(_config_file().read_text(encoding="utf-8")) or {}
+            ).get("discord") or {}
+            return disc.get("token"), disc.get("guild_id")
+        except Exception:
+            return None, None
+
+    @app.get("/api/config/health")
+    async def api_config_health() -> dict[str, Any]:
+        """Whether boot-time config validation succeeded (degraded-mode signal)."""
+        valid = cfg is not None
+        return {
+            "ok": True,
+            "valid": valid,
+            "detail": "" if valid else str(config_error or "config unavailable"),
+        }
 
     @app.get("/api/config")
     async def api_get_config() -> dict[str, Any]:
@@ -971,6 +1007,7 @@ def _make_pool(cfg: Any, bus: EventBus) -> Any:
 def main(config_path: str) -> None:
     """Entry point: build app with real or degraded dependencies, then serve."""
     cfg: Any = None
+    config_error: str | None = None
     store: Any = None
     gateway: Any = None
     embedder: Any = None
@@ -993,6 +1030,7 @@ def main(config_path: str) -> None:
     except Exception as exc:
         import logging
 
+        config_error = f"{type(exc).__name__}: {exc}"
         logging.getLogger(__name__).warning("config unavailable (%s): degraded mode", exc)
         cfg = None
 
@@ -1078,6 +1116,7 @@ def main(config_path: str) -> None:
     app = create_app(
         cfg=cfg,
         config_path=config_path,
+        config_error=config_error,
         engine=engine,
         init_runner=init_runner,
         status_provider=status_provider,

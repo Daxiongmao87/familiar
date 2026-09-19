@@ -431,6 +431,15 @@ body {
   padding: 12px 16px;
   border-top: 1px solid var(--line);
 }
+.config-banner {
+  flex: 0 0 auto;
+  padding: 8px 16px;
+  font-size: 13px;
+  color: var(--err);
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--err);
+}
+.config-banner[hidden] { display: none; }
 #settings-status { font-size: 12px; color: var(--fg-dim); }
 #settings-status.status-error { color: var(--err); }
 #settings-save {
