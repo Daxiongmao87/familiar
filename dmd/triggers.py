@@ -1,10 +1,10 @@
 """Trigger detection: deterministic regex fast path plus a hard-bounded
 optional fast-lane LLM tie-breaker.
 
-Latency rationale (2026-09-05 Priority-1 measurement): the configured fast
-endpoint (ling-3.0-tiny) is a *reasoning-first* model — a bare classification
-request spends ~180 hidden reasoning tokens on every call and takes 17-24s
-before it emits the JSON (measured: tools/latency_probe baseline, and a direct
+Latency rationale (2026-09-05 Priority-1 measurement): the fast endpoint
+then in service was a *reasoning-first* model — a bare classification
+request spent ~180 hidden reasoning tokens on every call and took 17-24s
+before emitting the JSON (measured: tools/latency_probe baseline, and a direct
 timed POST to the fast role). It also misclassified an unambiguous
 "we loot ... body" as is_trigger=false. That made the fast-lane classifier the
 single largest term in the transcript->answer budget (turn_latency detect_ms

@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+- **Run `JevWorker` retrieval legs concurrently.** Campaign RAG + web
+  search for all terms now fire in one `asyncio.gather` instead of a
+  sequential per-term loop (term order and tool-call counts preserved;
+  empty terms skip the pointless relevance pass). Live: 9.7 s of leg
+  work in 4.0 s wall on a 4-term trigger. Patch (no contract change).
+- **Swap generation roles to `minicpm5-2b`.** synthesis + fast
+  `model_id` in `config.example.yaml` (and live `config.yaml`) now name
+  `minicpm5-2b`; prior-model references removed from code comments,
+  tests, and owner constraints, with a config pin + static guard
+  (`test_generation_roles_pin_minicpm5_2b`). Minor (endpoint contract
+  change while pre-1.0).
 - **Structured output for ephemeral note synthesis.** `JevWorker` now
   requests `title`/`subtitle`/`body_md` JSON under a strict schema for
   scene-note tier (card tier already had one) and renders the note
@@ -250,7 +261,8 @@
 
 - **Fast-lane classifier dominated the transcript→answer budget (live defect,
   Priority-1 measurement, 2026-09-05).** `detect_trigger` asked the fast role
-  (ling-3.0-tiny) for every utterance *before* the regex fallback. That
+  (the then-serving fast-role model) for every utterance *before* the regex
+  fallback. That
   endpoint is reasoning-first: a bare classification request emits ~180 hidden
   reasoning tokens and takes **17–24 s** (measured: `turn_latency`
   `detect_ms` = 23854 ms on the live baseline, and a direct timed POST to the

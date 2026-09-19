@@ -114,11 +114,24 @@ class JevWorker(WorkerAgent):
         logger.info("jevworker terms=%s task=%.60s", terms, task)
 
         evidence: dict[str, list[str]] = {"offline": [], "online": []}
-        for term in terms:
-            res = await self._tool_retrieve({"query": term})
+        if not terms:
+            return await self._synthesize(
+                role, tier, task, transcript, staged_block, evidence, tool_calls
+            )
+        # Both legs for every term run concurrently: the legs are
+        # independent (campaign index vs web) and neither ever raises
+        # (failures arrive as error dicts), so one gather pays
+        # max(latencies) instead of their sum while preserving term
+        # order (gather returns in input order) and the tool-call count.
+        results = await asyncio.gather(
+            *(self._tool_retrieve({"query": t}) for t in terms),
+            *(self._tool_web_search({"query": t}) for t in terms),
+        )
+        offline_res, online_res = results[: len(terms)], results[len(terms):]
+        for term, res in zip(terms, offline_res, strict=True):
             tool_calls += 1
             evidence["offline"].append(f"Q: {term}\n{_hits_text(res)}")
-            res = await self._tool_web_search({"query": term})
+        for term, res in zip(terms, online_res, strict=True):
             tool_calls += 1
             evidence["online"].append(f"Q: {term}\n{_hits_text(res)}")
 

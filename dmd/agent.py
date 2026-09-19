@@ -123,7 +123,7 @@ _XML_ARGS_RE = re.compile(
 def _extract_hermes_call(t: str) -> dict[str, Any] | None:
     """Parse the Hermes-family XML tool-call format off the wire.
 
-    The configured local endpoints (e.g. ling-3.0-tiny) emit
+    The configured local endpoints (e.g. minicpm5-2b) emit
     ``HERMES-XML tool-call wire format`` — name + key/value args.
     regardless of the JSON protocol asked for in the prompt. The agent loop
     must read what the endpoint actually speaks (SPEC §12 swappable
@@ -292,7 +292,7 @@ class WorkerAgent:
         # Deterministic pre-grounding for every card (recall bias: no
         # taxonomy left to say which cards need it): fire ONE web_search
         # BEFORE the model's first decode and hand it the results. Guarantees
-        # grounding without a second decode — ling-tiny is too slow to
+        # grounding without a second decode — minicpm5-2b is too slow to
         # survive a push-back round-trip.
         grounding_block = ""
         grounding_calls = 0
@@ -661,7 +661,7 @@ class WorkerAgent:
 def _items_from_table(md: str) -> list[dict[str, Any]]:
     """Best-effort: extract structured items from a markdown table.
 
-    The worker schema asks the model for ``items`` with dc_find, but ling-tiny
+    The worker schema asks the model for ``items`` with dc_find, but minicpm5-2b
     often writes the skill-check table only into body_md. When items are
     absent, derive them from body rows like
     ``| Hidden pouch | Perception <n> | 1 | 150 gp | ... |`` where <n> is the

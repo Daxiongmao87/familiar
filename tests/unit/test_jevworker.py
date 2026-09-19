@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -169,3 +171,26 @@ async def test_ephemeral_tier_returns_structured_text() -> None:
     assert res.error is None
     assert res.text is not None and res.text.startswith("**T**")
     assert "B" in res.text
+
+
+async def test_both_legs_run_concurrently_not_sequentially() -> None:
+    """Slow legs overlap: 0.5 s retrieve + 0.5 s web must cost ~0.5 s,
+    not ~1.0 s (regression: the per-term loop awaited each leg in turn)."""
+    w = _worker()
+
+    async def slow_retrieve(args: dict) -> dict:
+        await asyncio.sleep(0.5)
+        return {"results": []}
+
+    async def slow_web(args: dict) -> dict:
+        await asyncio.sleep(0.5)
+        return {"results": []}
+
+    w._tool_retrieve = slow_retrieve  # type: ignore[method-assign]
+    w._tool_web_search = slow_web  # type: ignore[method-assign]
+    t0 = time.monotonic()
+    res = await w.run("task", "card", trigger_portion="need", transcript=TRANSCRIPT)
+    dt = time.monotonic() - t0
+    assert res.error is None
+    assert res.card is not None
+    assert dt < 0.9, f"legs ran sequentially ({dt:.2f}s for one term x two legs)"

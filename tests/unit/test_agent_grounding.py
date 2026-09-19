@@ -3,7 +3,7 @@
 Owner directive 2026-09-05, widened when trigger taxonomy was removed:
 with no kinds left to exempt by, worker agents pre-ground every card
 deterministically — one web_search fires BEFORE the model's first decode
-and its results are handed to the model as context. ling-tiny answers
+and its results are handed to the model as context. minicpm5-2b answers
 from memory and is too slow to survive a push-back round-trip. The
 ephemeral tier skips pre-grounding (notes, not references).
 """

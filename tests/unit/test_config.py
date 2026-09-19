@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from dmd.config import ConfigError, load_config, load_config_dict
@@ -279,3 +281,43 @@ def test_api_key_omitted_defaults_to_none():
     })
     assert cfg.models.synthesis.api_key is None
     assert cfg.models.stt.api_key is None
+
+
+# ---------------------------------------------------------------------------
+# generation model pin (owner directive: minicpm5-2b on both roles)
+# ---------------------------------------------------------------------------
+
+def test_generation_roles_pin_minicpm5_2b():
+    """config.example.yaml ships minicpm5-2b on synthesis + fast, and no
+    prior-model reference survives in shipped config, docs, or product code."""
+    import re
+
+    import yaml
+
+    root = Path(__file__).resolve().parents[2]
+    raw = yaml.safe_load((root / "config.example.yaml").read_text(encoding="utf-8"))
+    assert raw["models"]["synthesis"]["model_id"] == "minicpm5-2b"
+    assert raw["models"]["fast"]["model_id"] == "minicpm5-2b"
+
+    # Fragmented so this guard does not itself contain the banned strings.
+    stem = "li" + "ng"
+    banned_rx = re.compile(
+        "|".join(stem + tail for tail in ("-3.0-tiny", "/" + stem, "-tiny"))
+    )
+    offenders: list[str] = []
+    for base in (root / "dmd", root / "web", root / "tools", root / "scripts",
+                 root / "tests"):
+        for p in sorted(base.rglob("*")):
+            if not p.is_file():
+                continue
+            if p.suffix not in {".py", ".js", ".css", ".html", ".md", ".yaml"}:
+                continue
+            if "__pycache__" in p.parts:
+                continue
+            if banned_rx.search(p.read_text(encoding="utf-8", errors="replace")):
+                offenders.append(str(p.relative_to(root)))
+    for doc in ("config.example.yaml", "OWNER-CONSTRAINTS.md", "SPEC.md",
+                "AGENTS.md", "CHANGELOG.md"):
+        if banned_rx.search((root / doc).read_text(encoding="utf-8")):
+            offenders.append(doc)
+    assert not offenders, "prior-model references survive in:\n" + "\n".join(offenders)
