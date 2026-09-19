@@ -152,6 +152,7 @@ def create_app(
     bus: EventBus | None = None,
     browser_source: Any = None,
     speaking_tracker: Any = None,
+    config_path: str | Path | None = None,
 ) -> FastAPI:
     """Build the FastAPI app with optional injected dependencies.
 
@@ -499,8 +500,12 @@ def create_app(
         return out
 
     def _config_file() -> Path:
-        p = Path(str(getattr(cfg, "_config_path", None) or "config.yaml"))
-        return p if p.exists() else Path("config.yaml")
+        # Keep the desktop-supplied absolute path even when validation put the
+        # app into degraded mode. Falling back to the AppImage cwd makes the
+        # settings API claim the user's config is missing.
+        configured = getattr(cfg, "_config_path", None) if cfg is not None else None
+        p = Path(str(configured or config_path or "config.yaml"))
+        return p
 
     @app.get("/api/config")
     async def api_get_config() -> dict[str, Any]:
@@ -1072,6 +1077,7 @@ def main(config_path: str) -> None:
 
     app = create_app(
         cfg=cfg,
+        config_path=config_path,
         engine=engine,
         init_runner=init_runner,
         status_provider=status_provider,

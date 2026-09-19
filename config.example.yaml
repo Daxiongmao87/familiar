@@ -16,7 +16,7 @@ models:
   synthesis:                     # REQUIRED: cards, enrichment, scene summaries
     provider: remote             # remote = base_url below; local = desktop bridge
     base_url: http://localhost:8081/v1
-    api_key: ${LLM_API_KEY}      # optional; ${VAR} expanded from environment
+    api_key: null                # optional; enter it during setup if required
     model_id: minicpm5-2b
     # The card tier runs a multi-call agentic loop; a slow model (e.g. the 35b)
     # exceeds agent_timeout_s and errors. Use a fast model for responsive cards,
@@ -24,7 +24,7 @@ models:
     extra_body: { enable_thinking: false }   # free-form JSON; disable thinking for fast models
   fast:                          # optional: per-utterance classification
     base_url: http://localhost:8081/v1
-    api_key: ${LLM_API_KEY}
+    api_key: null
     model_id: minicpm5-2b
     extra_body: { enable_thinking: false }
   vision:                        # optional: init-time image captioning
@@ -72,7 +72,7 @@ openjev:                        # optional: binary deploy/wait trigger gate
   directed_worker: false         # JEV-routed deterministic worker (no agent loop)
 
 discord:
-  token: ${DISCORD_TOKEN}
+  token: null                    # enter the bot token during setup
   guild_id: "000000000000000000"   # the server; Familiar follows the DM within it
   dm_user_id: "000000000000000000" # your Discord user ID — Familiar joins your VC
   channel_id: null                 # optional: pin a specific voice channel
