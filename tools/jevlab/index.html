@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JEV Lab</title>
+<style>
+  :root { color-scheme: light; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         margin: 0 auto; max-width: 860px; padding: 24px 16px 64px;
+         color: #1a1a1a; background: #fff; line-height: 1.45; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  #health { font-size: 13px; color: #555; margin-bottom: 16px; }
+  #health .bad { color: #a00; }
+  label { display: block; font-weight: 600; font-size: 14px; margin: 16px 0 6px; }
+  textarea, input[type=text] { width: 100%; box-sizing: border-box;
+    font: 14px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    padding: 8px; border: 1px solid #999; border-radius: 6px; background: #fff; color: #1a1a1a; }
+  textarea { min-height: 150px; resize: vertical; }
+  .opt { display: flex; gap: 8px; margin-bottom: 8px; }
+  .opt input.id { flex: 0 0 130px; }
+  .opt input.desc { flex: 1; }
+  .opt button { flex: 0 0 auto; }
+  button { font-size: 14px; padding: 7px 14px; border: 1px solid #666;
+           border-radius: 6px; background: #f0f0f0; color: #1a1a1a; cursor: pointer; }
+  button:hover { background: #e2e2e2; }
+  button.primary { background: #0b5fff; border-color: #0b5fff; color: #fff; font-weight: 600; }
+  button.primary:hover { background: #004fd6; }
+  button:disabled { opacity: 0.55; cursor: wait; }
+  .row { display: flex; gap: 8px; align-items: center; margin-top: 16px; flex-wrap: wrap; }
+  .row .spacer { flex: 1; }
+  #status { font-size: 13px; color: #555; }
+  #status .err { color: #a00; }
+  .bar { margin: 10px 0; }
+  .bar .top { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 3px; }
+  .bar .top .p { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .bar .track { height: 14px; background: #e8e8e8; border-radius: 4px; overflow: hidden; }
+  .bar .fill { height: 100%; background: #0b5fff; }
+  .bar.winner .fill { background: #007a33; }
+  #meta { font-size: 13px; color: #555; margin-top: 12px; white-space: pre-wrap; }
+  #raw { font-size: 12px; background: #f4f4f4; border: 1px solid #ddd;
+         border-radius: 6px; padding: 10px; overflow-x: auto; margin-top: 12px; display: none; }
+  .hint { font-size: 13px; color: #555; font-weight: 400; }
+</style>
+</head>
+<body>
+<h1>JEV Lab</h1>
+<div id="health">checking endpoint&hellip;</div>
+
+<div class="row">
+  <span class="hint">Presets:</span>
+  <button id="preset-gate">Gate miss (Disguise)</button>
+  <button id="preset-suff">Sufficiency miss (lore)</button>
+</div>
+
+<label for="state">State</label>
+<textarea id="state" spellcheck="false"></textarea>
+
+<label for="question">Question</label>
+<input type="text" id="question" spellcheck="false">
+
+<label>Options <span class="hint">(2&ndash;16)</span></label>
+<div id="options"></div>
+<div class="row"><button id="add-opt">Add option</button></div>
+
+<div class="row">
+  <button id="score" class="primary">Score</button>
+  <span id="status"></span>
+</div>
+
+<div id="results"></div>
+<div id="meta"></div>
+<pre id="raw"></pre>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const stateEl = $("state"), questionEl = $("question"), optionsEl = $("options");
+const statusEl = $("status"), resultsEl = $("results"), metaEl = $("meta"), rawEl = $("raw");
+
+const PRESETS = {
+  gate: {
+    state: "sam: Is there only one guard?\ndm: It's two guards, side by side. These watches, they patrol in pairs.\nmarisha: Are we in like an alleyway, or in the street?\ndm: You guys are keeping off to the side. You're all on the outskirts of the lake and almost made your way out of the city towards where the--\nlaura: Go in the lake. Quick, go into the lake!\ntravis: I cast Disguise Self, and I turn myself into a crownsguard.",
+    question: "Does this moment in the live tabletop session demand a DM worker artifact right now?",
+    options: [
+      ["deploy", "A worker should act now: surface a skill-check table, lore note, or rules ruling for the DM."],
+      ["wait", "Nothing actionable yet: banter, narration, or an unfinished beat. Stay silent."]
+    ]
+  },
+  suff: {
+    state: "UTTERANCE: sam: Is there only one guard?\nRETRIEVED: [campaign/world.md] Crownsguard patrol the lakeside road in pairs after dusk.",
+    question: "Is this retrieved context sufficient to produce the DM card, or is another search needed?",
+    options: [
+      ["enough", "The retrieved context answers the need; synthesize the card now."],
+      ["more", "The retrieved context is missing key facts; search again with refined terms."]
+    ]
+  }
+};
+
+function addOption(id, desc) {
+  const rows = optionsEl.querySelectorAll(".opt");
+  if (rows.length >= 16) return;
+  const div = document.createElement("div");
+  div.className = "opt";
+  div.innerHTML = '<input class="id" type="text" placeholder="id" spellcheck="false">' +
+    '<input class="desc" type="text" placeholder="description" spellcheck="false">' +
+    "<button>Remove</button>";
+  div.querySelector(".id").value = id || "";
+  div.querySelector(".desc").value = desc || "";
+  div.querySelector("button").addEventListener("click", () => {
+    if (optionsEl.querySelectorAll(".opt").length > 2) div.remove();
+  });
+  optionsEl.appendChild(div);
+}
+
+function applyPreset(name) {
+  const p = PRESETS[name];
+  stateEl.value = p.state;
+  questionEl.value = p.question;
+  optionsEl.innerHTML = "";
+  for (const [id, desc] of p.options) addOption(id, desc);
+}
+
+function collectOptions() {
+  const out = [];
+  for (const div of optionsEl.querySelectorAll(".opt")) {
+    const id = div.querySelector(".id").value.trim();
+    const desc = div.querySelector(".desc").value.trim();
+    if (id && desc) out.push({ id, description: desc });
+  }
+  return out;
+}
+
+async function refreshHealth() {
+  const el = $("health");
+  try {
+    const r = await fetch("/api/health");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const h = await r.json();
+    const m = (h && h.model && (h.model.source || "")) || "unknown model";
+    el.textContent = "endpoint: " + m;
+  } catch (e) {
+    el.innerHTML = '<span class="bad">endpoint unreachable: ' + String(e) + "</span>";
+  }
+}
+
+async function score() {
+  const btn = $("score");
+  const options = collectOptions();
+  statusEl.innerHTML = "";
+  resultsEl.innerHTML = "";
+  metaEl.textContent = "";
+  rawEl.style.display = "none";
+  if (!stateEl.value.trim()) { statusEl.innerHTML = '<span class="err">State is empty.</span>'; return; }
+  if (!questionEl.value.trim()) { statusEl.innerHTML = '<span class="err">Question is empty.</span>'; return; }
+  if (options.length < 2) { statusEl.innerHTML = '<span class="err">Need at least 2 complete options.</span>'; return; }
+  btn.disabled = true;
+  statusEl.textContent = "scoring…";
+  const t0 = performance.now();
+  try {
+    const r = await fetch("/api/score", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: "lab-" + Date.now(),
+        state: stateEl.value,
+        question: questionEl.value,
+        options
+      })
+    });
+    const body = await r.json();
+    if (!r.ok) throw new Error((body && body.error) || ("HTTP " + r.status));
+    const wall = ((performance.now() - t0) / 1000).toFixed(2);
+    const ids = body.option_ids || [];
+    const probs = body.probabilities || [];
+    let best = 0;
+    for (let i = 1; i < probs.length; i++) if (probs[i] > probs[best]) best = i;
+    resultsEl.innerHTML = "";
+    ids.forEach((id, i) => {
+      const p = probs[i] || 0;
+      const div = document.createElement("div");
+      div.className = "bar" + (i === best ? " winner" : "");
+      div.innerHTML = '<div class="top"><span></span><span class="p"></span></div>' +
+        '<div class="track"><div class="fill"></div></div>';
+      div.querySelector("span").textContent = id;
+      div.querySelector(".p").textContent = (p * 100).toFixed(2) + "%";
+      div.querySelector(".fill").style.width = (p * 100).toFixed(2) + "%";
+      resultsEl.appendChild(div);
+    });
+    metaEl.textContent =
+      "server total " + (body.total_seconds ?? "?") + "s, forward " +
+      (body.forward_seconds ?? "?") + "s, tokens " + (body.input_tokens ?? "?") +
+      ", browser wall " + wall + "s";
+    rawEl.textContent = JSON.stringify(body, null, 2);
+    rawEl.style.display = "block";
+    statusEl.textContent = "";
+  } catch (e) {
+    statusEl.innerHTML = '<span class="err">' + String(e && e.message || e) + "</span>";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$("add-opt").addEventListener("click", () => addOption("", ""));
+$("score").addEventListener("click", score);
+$("preset-gate").addEventListener("click", () => applyPreset("gate"));
+$("preset-suff").addEventListener("click", () => applyPreset("suff"));
+applyPreset("gate");
+refreshHealth();
+</script>
+</body>
+</html>

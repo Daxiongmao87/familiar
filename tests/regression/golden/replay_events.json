@@ -1,0 +1,63 @@
+[
+  {
+    "t": 1.0,
+    "text": "I search the body",
+    "type": "transcript",
+    "user_id": "dm"
+  },
+  {
+    "detect_ms": 0.0,
+    "lane_ms": 0.0,
+    "t": 0.0,
+    "text": "I search the body",
+    "tier": "card",
+    "type": "turn_latency",
+    "user_id": "dm"
+  },
+  {
+    "t": 2.0,
+    "text": "never mind, rough luck there",
+    "type": "transcript",
+    "user_id": "alice"
+  },
+  {
+    "card": {
+      "body_md": "| Skill | DC |\n|---|---|\n| Investigation | 12 |\n| Perception | 14 |",
+      "id": "card-0",
+      "kind": "skill_table",
+      "meta": {
+        "entities": [],
+        "error": null,
+        "items": [],
+        "sources": [],
+        "tier": "card",
+        "tool_calls": 1
+      },
+      "player_ids": [],
+      "status": "active",
+      "t_context": 0.0,
+      "title": "Loot Table \u2014 Fallen Scout"
+    },
+    "type": "card"
+  },
+  {
+    "card": {
+      "body_md": "**Grappled** (SRD 5.1): speed becomes 0.",
+      "id": "card-1",
+      "kind": "rules",
+      "meta": {
+        "entities": [],
+        "error": null,
+        "items": [],
+        "sources": [],
+        "tier": "card",
+        "tool_calls": 1
+      },
+      "player_ids": [],
+      "status": "active",
+      "t_context": 0.0,
+      "title": "Rules \u2014 Grappled"
+    },
+    "type": "card"
+  }
+]

@@ -1,0 +1,89 @@
+{
+  "gate_version": "jev-gate-v39",
+  "threshold": 0.5,
+  "scorer": {
+    "source": "QuantTrio/Qwen3.5-4B-AWQ",
+    "revision": "32c292e3a73afe1138518180b1b6d2868c980ee2",
+    "note": "Verified on this scorer 2026-09-18 after the bf16->AWQ swap; baseline reproduced exactly. Any scorer change must rerun this suite, never assume transfer."
+  },
+  "baseline": {
+    "lowest_expected_deploy_p": 0.8807970779778823,
+    "highest_expected_wait_p": 0.0953494648991095,
+    "separation_gap": 0.7854476130787728
+  },
+  "note": "All nine cases must classify correctly before accepting any change to prompt wording, option descriptions/ordering, transcript construction, JEV model/quant, or scorer readout. Probabilities do not transfer between model revisions or quantizations.",
+  "cases": [
+    {
+      "id": "eval-1",
+      "expected": "deploy",
+      "lines": [
+        "dm: Make a deception check.",
+        "sam: Deception? I got a fourteen."
+      ]
+    },
+    {
+      "id": "eval-2",
+      "expected": "deploy",
+      "lines": [
+        "liam: Wait, how does grappling work again?",
+        "dm: I think your speed becomes zero. Let me check."
+      ]
+    },
+    {
+      "id": "eval-3",
+      "expected": "deploy",
+      "lines": [
+        "sam: I search the body.",
+        "dm: Roll investigation."
+      ]
+    },
+    {
+      "id": "eval-4",
+      "expected": "deploy",
+      "lines": [
+        "matt: I cast Disguise Self to look like the guard.",
+        "dm: Okay, what is the save on that?"
+      ]
+    },
+    {
+      "id": "eval-5",
+      "expected": "deploy",
+      "lines": [
+        "sam: Is there only one guard?",
+        "dm: There are two on the gate, plus the warden inside."
+      ]
+    },
+    {
+      "id": "eval-6",
+      "expected": "wait",
+      "lines": [
+        "sam: (snarling noises)",
+        "liam: (laughter)"
+      ]
+    },
+    {
+      "id": "eval-7",
+      "expected": "wait",
+      "lines": [
+        "liam: never mind, rough luck there",
+        "sam: all of us just staring at the dice"
+      ]
+    },
+    {
+      "id": "eval-8",
+      "expected": "wait",
+      "lines": [
+        "dm: The torchlight flickers against the wet stone as you descend.",
+        "dm: The air smells of rust and old water."
+      ]
+    },
+    {
+      "id": "eval-9",
+      "expected": "wait",
+      "lines": [
+        "matt: So I was thinking we could go around—",
+        "sam: Hold on, my mic cut out, say that again."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+# Voice Chat DM Assistant — canonical configuration.
+# Copy to config.yaml. Every AI endpoint is role-based; no model names in code.
+
+server:
+  host: 0.0.0.0
+  port: 8760
+  https_enabled: false          # true → serve on https:// (needs cert_file/key_file)
+  cert_file: null               # e.g. ./certs/fullchain.pem  (mkcert or Let's Encrypt)
+  key_file: null                # e.g. ./certs/privkey.pem
+
+project:
+  path: ./my-campaign            # worldbuilding folder to index
+  name: My Campaign
+
+models:
+  synthesis:                     # REQUIRED: cards, enrichment, scene summaries
+    base_url: http://localhost:8081/v1
+    api_key: ${LLM_API_KEY}      # optional; ${VAR} expanded from environment
+    model_id: ling/ling-3.0-tiny
+    # The card tier runs a multi-call agentic loop; a slow model (e.g. the 35b)
+    # exceeds agent_timeout_s and errors. Use a fast model for responsive cards,
+    # or keep a slow model and raise agent_timeout_s for quality-over-latency.
+    extra_body: { enable_thinking: false }   # free-form JSON; disable thinking for fast models
+  fast:                          # optional: per-utterance classification
+    base_url: http://localhost:8081/v1
+    api_key: ${LLM_API_KEY}
+    model_id: ling/ling-3.0-tiny
+    extra_body: { enable_thinking: false }
+  vision:                        # optional: init-time image captioning
+    # base_url: ...
+    # api_key: ...
+    # model_id: ...
+    enabled: false
+  stt:                           # OpenAI /v1/audio/transcriptions dialect
+    base_url: http://localhost:8081/v1
+    api_key: ${LLM_API_KEY}
+    extra_body: {}
+    dialect: openai              # openai | whisperx (POST /transcribe)
+    diarize: true                # whisperx: pyannote speaker segments (feeds
+                                 # §7a per-speaker attribution)
+    align: false                 # whisperx: word timestamps (unused; extra latency)
+  embeddings:
+    provider: local              # local | endpoint
+    model_id: BAAI/bge-small-en-v1.5
+
+orchestration:
+  max_concurrent: 3              # keep <= backend --parallel slots
+  job_timeout_s: 60.0          # must exceed agent.agent_timeout_s
+
+stt_pipeline:
+  sample_rate: 16000             # transcription target rate
+  silence_ms: 500                # end-of-utterance threshold (low to protect the 5s voice->transcript budget)
+  min_utterance_ms: 400
+  max_chunk_s: 25
+
+# Predictive-retrieval staging ("Predictive RAG"): the transcript monitor
+# predicts likely-next entities and their excerpts are pre-fetched into a small
+# RAM LRU so a real turn pulls already-embedded context (zero retrieval latency
+# on the answer path). Advisory only; a miss is a no-op fallback.
+staging:
+  enabled: true
+  ttl_s: 120.0                   # staged excerpts expire; re-fetch is cheap
+  max_entries: 32                # RAM LRU bound
+  prefetch_k: 4                  # excerpts stored per predicted entity
+  max_predicted: 6               # cap predictions prefetched per monitor tick
+  max_inject_chars: 6000         # ceiling on the injected staged block
+
+openjev:                        # optional: binary deploy/wait trigger gate
+  enabled: false                 # off = legacy regex + fast-LLM trigger path
+  base_url: http://127.0.0.1:8199  # openjev-serve /score endpoint
+  threshold: 0.5                 # P(deploy) at or above this deploys a worker
+  timeout_s: 3.0                 # per scoring call; failures fail closed to wait
+  recent_n: 8                    # transcript lines in the gate state window
+  debounce_s: 30.0               # redeploy suppression window in seconds (0 off)
+  directed_worker: false         # JEV-routed deterministic worker (no agent loop)
+
+discord:
+  token: ${DISCORD_TOKEN}
+  guild_id: "000000000000000000"   # the server; Familiar follows the DM within it
+  dm_user_id: "000000000000000000" # your Discord user ID — Familiar joins your VC
+  channel_id: null                 # optional: pin a specific voice channel
+  self_mute: true
+  self_deaf: false                 # MUST be false to receive audio

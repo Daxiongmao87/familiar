@@ -1,0 +1,31 @@
+.venv/
+__pycache__/
+*.pyc
+.ruff_cache/
+data/
+*.db
+config.yaml
+config.test-*.yaml
+screenshots/
+.env
+
+# Agent tooling (Claude Code, Cursor) — runtime, never committed
+.claude/
+.cursor/
+.claude.json
+
+# Bundled SearXNG — source/venv/runtime are build artifacts
+.searxng-src/
+.searxng/
+.venv-searxng/
+
+# Local logs / captured video — ephemeral verification evidence
+*.log
+*.mp4
+*.webm
+
+# Local TLS material — secrets
+certs/
+
+# Per-project index/player DB dir
+.dmd/
