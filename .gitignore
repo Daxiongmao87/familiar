@@ -5,6 +5,7 @@ __pycache__/
 data/
 *.db
 config.yaml
+config.test-*.yaml
 screenshots/
 .env
 
