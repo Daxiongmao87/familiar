@@ -803,6 +803,19 @@
     stt_rate: 'cfg-stt-rate', stt_sil: 'cfg-stt-silence', stt_min: 'cfg-stt-minutter', stt_max: 'cfg-stt-maxchunk',
   };
 
+  // These are the runtime defaults from dmd.config. Keep the editor useful
+  // when an older or partial config omits optional sections.
+  const SETTINGS_DEFAULTS = {
+    'cfg-emb-provider': 'local', 'cfg-emb-model': 'BAAI/bge-small-en-v1.5',
+    'cfg-agent-timeout': 45, 'cfg-agent-maxcalls': 6,
+    'cfg-agent-ephcalls': 3, 'cfg-agent-webtimeout': 8,
+    'cfg-agent-cadence': 30, 'cfg-agent-lookback': 20,
+    'cfg-orch-conc': 3, 'cfg-orch-jobtimeout': 60, 'cfg-orch-stale': 120,
+    'cfg-stt-host': '127.0.0.1', 'cfg-stt-port': 43007,
+    'cfg-stt-rate': 16000, 'cfg-stt-silence': 500,
+    'cfg-stt-minutter': 400, 'cfg-stt-maxchunk': 25,
+  };
+
   function setSettingsStatus(msg, isError) {
     const el = document.getElementById('settings-status');
     if (!el) return;
@@ -820,7 +833,10 @@
       const p = c.project || {}, d = c.discord || {}, m = c.models || {};
       const a = c.agent || {}, o = c.orchestration || {}, sp = c.stt_pipeline || {};
       const sy = m.synthesis || {}, fa = m.fast || {}, st = m.stt || {}, em = m.embeddings || {};
-      const set = (id, v) => { const el = document.getElementById(S[id]); if (el) el.value = (v == null ? '' : v); };
+      const set = (id, v) => {
+        const el = document.getElementById(S[id]);
+        if (el) el.value = (v == null ? (SETTINGS_DEFAULTS[el.id] ?? '') : v);
+      };
       const setSecret = (id, v) => {
         const el = document.getElementById(S[id]);
         if (!el) return;
@@ -830,7 +846,10 @@
         if (masked) el.placeholder = 'Configured — leave blank to keep current';
       };
       const setExtra = (id, v) => { const el = document.getElementById(S[id]); if (el) el.value = (v && Object.keys(v).length) ? JSON.stringify(v, null, 2) : '{}'; };
-      const setNum = (id, v) => { const el = document.getElementById(S[id]); if (el && v != null) el.value = v; };
+      const setNum = (id, v) => {
+        const el = document.getElementById(S[id]);
+        if (el) el.value = v == null ? (SETTINGS_DEFAULTS[el.id] ?? '') : v;
+      };
       const setCheck = (id, v) => { const el = document.getElementById(S[id]); if (el) el.checked = !!v; };
 
       set('project_path', p.path); set('project_name', p.name);
@@ -863,7 +882,12 @@
 
   function collectConfig() {
     const get = (id) => { const el = document.getElementById(S[id]); return el ? el.value : ''; };
-    const getNum = (id) => { const v = get(id); if (v == null || v === '') return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
+    const getNum = (id) => {
+      const v = get(id);
+      if (v == null || v === '') return SETTINGS_DEFAULTS[S[id]] ?? null;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : (SETTINGS_DEFAULTS[S[id]] ?? null);
+    };
     const getCheck = (id) => { const el = document.getElementById(S[id]); return el ? el.checked : false; };
     const getSecret = (id) => {
       const el = document.getElementById(S[id]);
