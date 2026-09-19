@@ -32,8 +32,6 @@
   `index_store.py` + `embedder.py` (SQLite + sqlite-vec index and local
   embeddings), `orchestrator.py` (bounded async job orchestration),
   `tools_reg.py` (tool registry), `types.py`, and `config.py`.
-- Governing reference: `SPEC.md` (architecture spec, design-frozen
-  2026-08-25).
 - Non-goals: no cloud dependency (all AI endpoints local and swappable), no
   VTT integration in v1, no automated Discord image/chat ingestion in v1.
 
@@ -109,86 +107,8 @@
 
 - Concise imperative commit messages, scoped to the change. Optional
   conventional prefixes: feat, fix, refactor, chore, docs, test.
-- Every commit that changes behavior or contracts gets a changelog
-  Unreleased entry naming its SemVer class (below), or an explicit
-  non-release-affecting exclusion.
 - Pull requests describe impact, changed contracts, verification performed,
   and residual risks.
-
-## Versioning and changelog (SemVer 2.0)
-
-Version authority has three parts; all three are required for a release:
-
-1. The project manifest is the authoritative version string.
-2. Annotated git tags named vX.Y.Z are immutable release snapshots.
-3. CHANGELOG.md is the human release ledger: changes, commits,
-   verification evidence, migration notes, residual risks.
-
-A dirty working tree is never a released state.
-
-### SemVer rules
-
-Pre-1.0 (0.x.y):
-
-- Minor, 0.(x+1).0: new capability, new API or contract, new user-visible
-  behavior, persistence or migration behavior, or any breaking contract
-  change while pre-1.0.
-- Patch, 0.x.(y+1): backwards-compatible fix, documentation, test
-  hardening, verification tooling, or safety fix that adds no capability
-  and changes no contracts.
-
-At and after 1.0.0 (standard SemVer 2.0.0):
-
-- Major: breaking API, contract, persistence, or workflow change.
-- Minor: backwards-compatible capability addition.
-- Patch: backwards-compatible fix, documentation, test, or security
-  hardening.
-
-### Classification by change type
-
-- New capability or additive contract: minor.
-- Backwards-compatible fix: patch.
-- Breaking change: minor pre-1.0, major post-1.0.
-- Docs-only or test-only with no behavior change: patch, or no version
-  impact with an explicit exclusion.
-- State, persistence, or migration changes require replay or load evidence
-  and a migration note.
-
-### Changelog
-
-- CHANGELOG.md keeps an [Unreleased] section plus one section per released
-  version, newest first.
-- Every post-release commit that affects product, contracts, or behavior
-  gets an Unreleased entry: change summary, commit hash, SemVer class,
-  verification state, residual risk — or an explicit non-release-affecting
-  exclusion.
-- "No unreleased changes" is valid only when every post-tag commit is
-  recorded as non-release-affecting.
-
-### Release workflow
-
-1. Classify the change before implementation; name the provisional SemVer
-   class.
-2. Implement in scoped commits; verify (relevant tests, the full suite when
-   feasible, runtime evidence when runtime behavior is claimed).
-3. Bump the manifest version to the selected version.
-4. Update CHANGELOG.md: version, date, included changes, commits,
-   verification evidence, migration notes, residual risks.
-5. Commit release metadata (chore(release): vX.Y.Z).
-6. Create an annotated tag: git tag -a vX.Y.Z -m "Voice Chat DM Assistant vX.Y.Z".
-7. Verify: git describe --tags, the tag points at the release commit, the
-   manifest version matches the tag, the changelog has the matching
-   section.
-8. Push the commit and tag when a remote exists. If push fails, report the
-   local tag and the concrete blocker; the local annotated tag is the local
-   release authority.
-
-### Prohibited substitutions
-
-- A commit hash alone is not a version.
-- Task completion is not a release without manifest, changelog, and tag.
-- A dirty tree is never tagged.
-- Smoke checks are not full-fidelity verification evidence.
 
 ## Definition of done
 
@@ -198,7 +118,6 @@ A change is done when:
 - the relevant tests pass;
 - a bug fix includes a regression test that failed against the defect and
   passes unchanged after the fix (RULES.md, "Testing");
-- a changelog Unreleased entry (or explicit exclusion) exists;
 - RULES.md is respected: hard rules unviolated, any over-long line is
   deliberate, ephemeral artifacts uncommitted;
 - residual risks are stated.
