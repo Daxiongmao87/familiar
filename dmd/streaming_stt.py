@@ -1,7 +1,9 @@
 """Streaming STT client for the SimulStreaming whisper server (TCP).
 
-Protocol, verified against the cloned source (simulstreaming/whisper/
-whisper_streaming/whisper_server.py + vac_online_processor.py + README):
+Protocol, verified against the vendored server
+(services/stt_server/whisper_online_server.py: upstream
+ufal/whisper_streaming @ 6da90b44 plus a JSON/finals patch, run with
+--vac so VAD utterance ends become is_final lines):
 
 - Client connects and streams continuous raw s16le mono 16 kHz PCM
   bytes — no handshake at all (reference client:
@@ -38,16 +40,16 @@ SAMPLING_RATE = 16000
 
 
 class StreamingSttAdapter:
-    """Per-user streaming transcription against simulstreaming_whisper_server.
+    """Per-user streaming transcription against whisper_online_server.
 
-    The server's socket protocol is: client sends one JSON line of config
-    (ignored), then raw 16-bit PCM bytes; the server replies with one JSON
-    line per processed chunk: {"text","begin","end","is_final",...}.
+    The server's socket protocol is: client streams raw 16-bit PCM bytes
+    from byte zero (no handshake — the reference client is
+    ``arecord ... | nc host port``); the server replies with newline JSON
+    per confirmed increment: {"text","start","end","is_final"}.
 
     We run ONE connection per user, held open while that user's Discord mic
-    light is on. On mic-off (or silence timeout) we send a config-only
-    message with is_end semantics by closing the socket; any trailing
-    ``is_final`` response is drained first with a short timeout.
+    light is on. On mic-off (or silence timeout) we close the socket; any
+    trailing ``is_final`` response is drained first with a short timeout.
     """
 
     # Minimum seconds between reconnect attempts per user while the server
@@ -185,6 +187,15 @@ class _UserStream:
                 await self._die()
 
     async def _read_loop(self) -> None:
+        """Release disconnected sessions so the next audio chunk reconnects."""
+        try:
+            await self._read_messages()
+        finally:
+            if not self._closed:
+                await self._die()
+
+    async def _read_messages(self) -> None:
+        """Publish incremental text and VAD boundaries from the server."""
         assert self._reader is not None
         while not self._closed:
             try:
@@ -198,7 +209,7 @@ class _UserStream:
             except (UnicodeDecodeError, json.JSONDecodeError):
                 continue
             text = msg.get("text", "")
-            if not text:
+            if not text and not msg.get("is_final"):
                 continue  # empty VAD-only tick
             # Audio-clock mapping: msg["start"]/["end"] are seconds of
             # stream audio; feeding is paced in real time, so wall(speech
@@ -207,7 +218,7 @@ class _UserStream:
             # §14 budget number.
             a_end = msg.get("end")
             a_start = msg.get("start")
-            if isinstance(a_start, (int, float)):
+            if not self._acc and isinstance(a_start, (int, float)):
                 self._seg_start = self._t0 + float(a_start)
             t_end = (
                 self._t0 + float(a_end)
@@ -222,7 +233,8 @@ class _UserStream:
             if msg.get("is_final"):
                 whole = self._acc
                 self._acc = ""
-                await self._fire_final(whole, self._seg_start, t_end)
+                if whole:
+                    await self._fire_final(whole, self._seg_start, t_end)
                 self._seg_start = t_end
             else:
                 await self._fire_partial(self._acc)
@@ -266,6 +278,11 @@ class _UserStream:
                 await self._writer.drain()
             except OSError:
                 pass
+        if self._writer is not None and self._writer.can_write_eof():
+            try:
+                self._writer.write_eof()
+            except OSError:
+                pass
         # drain any trailing final response with a bounded timeout
         if self._reader is not None:
             try:
@@ -296,13 +313,13 @@ class _UserStream:
             except (UnicodeDecodeError, json.JSONDecodeError):
                 continue
             text = msg.get("text", "")
-            if not text:
+            if not text and not msg.get("is_final"):
                 continue
             # Same audio-clock mapping as the pump loop so drain-path
             # latency telemetry stays honest (t_end := now would zero it).
             a_end = msg.get("end")
             a_start = msg.get("start")
-            if isinstance(a_start, (int, float)):
+            if not self._acc and isinstance(a_start, (int, float)):
                 self._seg_start = self._t0 + float(a_start)
             t_end = (
                 self._t0 + float(a_end)
@@ -313,14 +330,18 @@ class _UserStream:
             if msg.get("is_final"):
                 whole = self._acc
                 self._acc = ""
-                await self._fire_final(whole, self._seg_start, t_end)
+                if whole:
+                    await self._fire_final(whole, self._seg_start, t_end)
                 return
 
     async def _die(self) -> None:
         """Mark dead and evict so the next ``feed`` for this user reopens."""
         self._closed = True
-        self.owner._sessions.pop(self.user_id, None)
-        if self._pump:
+        if self.owner._sessions.get(self.user_id) is self:
+            self.owner._sessions.pop(self.user_id, None)
+        if self._writer is not None:
+            self._writer.close()
+        if self._pump and self._pump is not asyncio.current_task():
             self._pump.cancel()
 
 

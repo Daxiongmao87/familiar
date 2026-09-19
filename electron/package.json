@@ -1,6 +1,6 @@
 {
   "name": "familiar-desktop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Familiar desktop shell: Electron host + bundled Python backend + local inference",
   "desktopName": "Familiar",

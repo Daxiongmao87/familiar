@@ -8,7 +8,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
-  allInstalled, loadState, markFileDone, migrateState, planInstall, saveState,
+  allInstalled, installVendoredFile, loadState, markFileDone, migrateState, planInstall, saveState,
 } = require('../state.js');
 
 const MANIFEST_V1 = {
@@ -111,4 +111,28 @@ test('allInstalled is true only when every wanted file verifies', () => {
   fs.writeFileSync(path.join(dirFor('b'), 'g.bin'), Buffer.alloc(5));
   assert.equal(allInstalled(MANIFEST_V1, dirFor, ['b']), true);
   assert.equal(allInstalled(MANIFEST_V1, dirFor, ['a', 'b']), false);
+});
+
+test('installVendoredFile copies from resources and enforces size', () => {
+  const { dirFor } = setup();
+  const resDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fam-res-'));
+  fs.mkdirSync(path.join(resDir, 'stt_server'), { recursive: true });
+  fs.writeFileSync(path.join(resDir, 'stt_server', 'srv.py'), Buffer.alloc(11));
+  const dest = path.join(dirFor('stt/server'), 'srv.py');
+  installVendoredFile('stt_server/srv.py', dest, 11,
+    { dev: false, resourcesPath: resDir, repoRoot: '/none' });
+  assert.equal(fs.statSync(dest).size, 11);
+  assert.throws(() => installVendoredFile('stt_server/srv.py', dest, 12,
+    { dev: false, resourcesPath: resDir, repoRoot: '/none' }), /size/);
+});
+
+test('installVendoredFile in dev reads from the repo services tree', () => {
+  const { dirFor } = setup();
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'fam-repo-'));
+  fs.mkdirSync(path.join(repo, 'services', 'stt_server'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'services', 'stt_server', 'srv.py'), Buffer.alloc(7));
+  const dest = path.join(dirFor('stt/server'), 'srv.py');
+  installVendoredFile('stt_server/srv.py', dest, 7,
+    { dev: true, resourcesPath: '/none', repoRoot: repo });
+  assert.equal(fs.statSync(dest).size, 7);
 });

@@ -35,6 +35,11 @@ extraResources:
     to: jev_sidecar/serve.py
   - from: ../services/jev_sidecar/_vendored
     to: jev_sidecar/_vendored
+  # Vendored (patched) streaming STT server: stock upstream has no finals
+  # signal, so the JSON/finals variant ships in the AppImage and the
+  # installer copies it into stt/server next to the stock downloads.
+  - from: ../services/stt_server/whisper_online_server.py
+    to: stt_server/whisper_online_server.py
   # Seed for the per-user backend config (never the real config.yaml).
   - from: ../config.example.yaml
     to: config.example.yaml

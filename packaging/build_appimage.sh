@@ -33,9 +33,10 @@ fail() { echo "BUILD FAILED: $*" >&2; exit 1; }
 
 cd "$REPO"
 
-step "1/6 vendoring JEV sidecar (pinned ../openjev)"
+step "1/6 vendoring JEV sidecar (pinned ../openjev) + STT server (patched)"
 python3 services/jev_sidecar/vendor.py
 python3 services/jev_sidecar/vendor.py --check
+python3 services/stt_server/vendor.py --check
 
 step "2/6 installing electron deps + running unit tests"
 (

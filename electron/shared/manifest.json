@@ -28,8 +28,8 @@
         },
         {
           "path": "whisper_online_server.py",
-          "url": "https://raw.githubusercontent.com/ufal/whisper_streaming/6da90b44b7e50d79695e68166d2a2c7609c75abb/whisper_online_server.py",
-          "size": 6097
+          "vendored": "stt_server/whisper_online_server.py",
+          "size": 7929
         }
       ]
     },

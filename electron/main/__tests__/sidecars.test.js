@@ -15,7 +15,7 @@ test('sttArgv pins the verified server flags', () => {
     '/srv/whisper_online_server.py',
     '--host', '127.0.0.1', '--port', '43007',
     '--model', 'large-v3-turbo', '--model_dir', '/model',
-    '--backend', 'faster-whisper',
+    '--backend', 'faster-whisper', '--vac',
   ]);
 });
 

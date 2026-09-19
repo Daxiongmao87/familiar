@@ -16,6 +16,7 @@
   const BACKOFF_MIN = 1000;
   const BACKOFF_MAX = 10000;
   const playerNames = {};
+  const partialTranscripts = new Map();
 
   fetch('/api/players')
     .then((r) => (r.ok ? r.json() : null))
@@ -158,6 +159,25 @@
     div.appendChild(txt);
 
     transcriptPane.appendChild(div);
+    transcriptPane.scrollTop = transcriptPane.scrollHeight;
+    return div;
+  }
+
+  /** Update the current utterance while audio is still arriving. */
+  function updatePartial(userId, text) {
+    let row = partialTranscripts.get(userId);
+    if (!text) {
+      if (row) row.remove();
+      partialTranscripts.delete(userId);
+      return;
+    }
+    if (!row) {
+      row = addTranscript(userId, text, userId === 'browser_mixed' ? 'Speaking…' : '');
+      row.dataset.testid = 'transcript-partial';
+      row.classList.add('transcript-partial');
+      partialTranscripts.set(userId, row);
+    }
+    row.querySelector('.transcript-text').textContent = text;
     transcriptPane.scrollTop = transcriptPane.scrollHeight;
   }
 
@@ -330,6 +350,9 @@
   function handleEvent(msg) {
     if (!msg || typeof msg !== 'object') return;
     switch (msg.type) {
+      case 'transcript_partial':
+        updatePartial(msg.user_id || '', msg.text || '');
+        break;
       case 'transcript':
         addTranscript(msg.user_id || '', msg.text || '', msg.name || '');
         break;
@@ -574,7 +597,11 @@
     let sysAudioTracks = [];
     let displayStreamFailed = false;
     try {
-      displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        systemAudio: 'include',
+      });
       sysAudioTracks = displayStream.getAudioTracks();
       if (sysAudioTracks.length === 0) {
         displayStreamFailed = true;

@@ -83,7 +83,8 @@ async def test_without_tracker_source_identity_is_kept() -> None:
     engine = _engine(None, events)
     await engine._on_stream_final("alice", "plain line", 5.0, 6.0)
     assert len(events) >= 1
-    assert events[0]["type"] == "transcript"
+    events = [event for event in events if event["type"] == "transcript"]
+    assert events
     assert events[0]["user_id"] == "alice"
     assert "name" not in events[0]
     await engine.aclose()

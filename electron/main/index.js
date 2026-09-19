@@ -16,7 +16,8 @@
 
 const path = require('node:path');
 
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, desktopCapturer, session } = require('electron');
+const { installCaptureHandler } = require('./capture');
 
 const { ensureUserConfig, resolveBackend } = require('./backend');
 const { startBridge } = require('./bridge');
@@ -25,7 +26,7 @@ const { registerIpc } = require('./ipc');
 const { basePython, ensureVenv, jevArgv, sttArgv, waitForHttp, waitForTcp } = require('./sidecars');
 const { supervise } = require('./supervise');
 const { downloadFile } = require('../installer/downloader');
-const { allInstalled, loadState, markFileDone, migrateState, planInstall, saveState } = require('../installer/state');
+const { allInstalled, installVendoredFile, loadState, markFileDone, migrateState, planInstall, saveState } = require('../installer/state');
 
 const SETUP_W = 780;
 const SETUP_H = 780;
@@ -235,6 +236,21 @@ async function runInstall(wantedIds, progress) {
   progress({ overall: total ? done / total : 1, detail: 'starting downloads…' });
   for (const item of plan.files) {
     const rel = `${item.component.id}/${item.file.path}`;
+    if (item.file.vendored) {
+      progress({ overall: total ? done / total : 1, detail: `installing ${rel}` });
+      installVendoredFile(item.file.vendored, item.dest, item.file.size, {
+        dev: process.env.FAMILIAR_DEV === '1',
+        resourcesPath: process.resourcesPath,
+        repoRoot: repoRoot(),
+      });
+      progress({ overall: total ? (done + (item.file.size || 0)) / total : 1,
+        detail: `installing ${rel}`, file: rel,
+        fileDone: item.file.size || 0, fileTotal: item.file.size });
+      done += item.file.size || 0;
+      markFileDone(ctx.state, item.component, item.file.path, item.file.size);
+      saveState(ctx.dirs.stateFile, ctx.state);
+      continue;
+    }
     progress({ overall: total ? done / total : 1, detail: `downloading ${rel}` });
     await downloadFile(item.file.url, item.dest, {
       expectedSize: item.file.size,
@@ -462,6 +478,7 @@ function showMainWindow() {
     return ctx.windows.main;
   }
   const main = createWindow('main', { width: 1280, height: 900, title: 'Familiar' });
+  installCaptureHandler(session.defaultSession, desktopCapturer, () => ctx.windows.main);
   lockNavigation(main, [ctx.backend.baseUrl]);
   main.loadURL(`${ctx.backend.baseUrl}/`);
   return main;
@@ -483,6 +500,11 @@ async function shutdown() {
 }
 
 if (require.main === module || process.env.FAMILIAR_ELECTRON_MAIN) {
+  if (process.platform === 'linux') {
+    const features = app.commandLine.getSwitchValue('enable-features');
+    app.commandLine.appendSwitch('enable-features',
+      [features, 'PulseaudioLoopbackForScreenShare'].filter(Boolean).join(','));
+  }
   app.whenReady().then(() => ready().catch((err) => {
     // eslint-disable-next-line no-console
     console.error('fatal startup error:', err);

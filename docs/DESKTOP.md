@@ -197,10 +197,14 @@ venv+ssl verified).
 ## 7. STT provisioning
 
 Live path is unchanged: Electron/browser capture → mixed 16 kHz PCM →
-`/ws/audio` → `StreamingSttAdapter`. The installer provisions the exact
-server the adapter was verified against: `ufal/whisper_streaming @
-6da90b44` (`whisper_online_server.py`, port 43007, `--backend
-faster-whisper --model large-v3-turbo --model_dir <downloaded>`) with
+`/ws/audio` → `StreamingSttAdapter`. Stock upstream sends plain-text
+lines with no utterance-final signal, so the installer provisions a
+patched server: `services/stt_server/whisper_online_server.py`
+(`ufal/whisper_streaming @ 6da90b44` + a JSON/finals patch — newline
+`{"text","start","end","is_final"}` from the VAC endpoint flag) copied
+from app resources next to the three stock downloads, launched on port
+43007 with `--backend faster-whisper --model large-v3-turbo --model_dir
+<downloaded> --vac` (`--vac` is what makes finals exist) with
 weights `dropbox-dash/faster-whisper-large-v3-turbo @ 0a363e91`
 (canonical id after the mobiuslabsgmbh move; 1.62 GB). Model choice
 `large-v3-turbo` is a provisioning default (best live speed/quality in

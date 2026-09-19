@@ -131,4 +131,26 @@ function allInstalled(manifest, dirFor, wantedIds) {
   return files.length === 0;
 }
 
-module.exports = { loadState, saveState, migrateState, planInstall, markFileDone, allInstalled };
+/**
+ * Copy one manifest-vendored file (shipped in app resources, e.g. the
+ * patched STT server) into its component dir, size-verified.
+ * @param {string} rel resources-relative path from the manifest entry.
+ * @param {string} dest absolute destination path.
+ * @param {number} expectedSize manifest byte count (enforced).
+ * @param {{dev:boolean, resourcesPath:string, repoRoot:string}} roots
+ *   dev reads from the repo services/ tree, prod from app resources.
+ * @throws {Error} when the resource is missing or the size mismatches.
+ */
+function installVendoredFile(rel, dest, expectedSize, roots) {
+  const src = roots.dev
+    ? path.join(roots.repoRoot, 'services', rel)
+    : path.join(roots.resourcesPath, rel);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.copyFileSync(src, dest);
+  const actual = fs.statSync(dest).size;
+  if (actual !== expectedSize) {
+    throw new Error(`vendored ${rel}: size ${actual} != manifest ${expectedSize}`);
+  }
+}
+
+module.exports = { loadState, saveState, migrateState, planInstall, markFileDone, allInstalled, installVendoredFile };

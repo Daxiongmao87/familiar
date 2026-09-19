@@ -73,12 +73,14 @@ function ensureVenv(python, venvDir, packages, onLog) {
  * @returns {{command:string,args:string[]}}
  */
 function sttArgv(venvPy, serverDir, modelDir, port) {
+  // --vac is REQUIRED: VAD utterance endpointing is what makes the
+  // server emit is_final lines; without it no transcript ever commits.
   return {
     command: venvPy,
     args: [path.join(serverDir, 'whisper_online_server.py'),
       '--host', '127.0.0.1', '--port', String(port),
       '--model', 'large-v3-turbo', '--model_dir', modelDir,
-      '--backend', 'faster-whisper'],
+      '--backend', 'faster-whisper', '--vac'],
   };
 }
 

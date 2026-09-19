@@ -346,6 +346,9 @@ class SessionEngine:
             return
         t_dispatch = time.monotonic()
         groups = self._attribute(user_id, [], text, t_start, t_end)
+        # Clear the provisional row using its capture identity before
+        # publishing finals, whose attributed speaker IDs may differ.
+        await self._on_stream_partial(user_id, "")
         await self._publish_and_dispatch(groups)
         post_speech_ms = (time.monotonic() - t_end) * 1000.0
         logger.info(

@@ -22,10 +22,13 @@ HF = "https://huggingface.co"
 STT_SERVER_REV = "6da90b44b7e50d79695e68166d2a2c7609c75abb"
 STT_SERVER_FILES = {
     "whisper_online.py": 38837,
-    "whisper_online_server.py": 6097,
     "silero_vad_iterator.py": 5899,
     "line_packet.py": 3201,
 }
+# Stock whisper_online_server.py sends plain text with no finals signal, so
+# Familiar ships a patched JSON/finals variant instead (vendored, copied
+# from app resources at install; size read from the committed file).
+STT_SERVER_VENDORED = "services/stt_server/whisper_online_server.py"
 
 # faster-whisper large-v3-turbo: canonical repo id after the
 # mobiuslabsgmbh -> dropbox-dash move (HF API 307, followed 2026-09-19).
@@ -127,6 +130,12 @@ def _hf_files(repo: str, rev: str, files: dict[str, int]) -> list[dict]:
     ]
 
 
+def _vendored_server_size() -> int:
+    """Byte size of the committed patched server (manifest size check)."""
+    root = Path(__file__).resolve().parent.parent.parent
+    return (root / STT_SERVER_VENDORED).stat().st_size
+
+
 def build_manifest() -> dict:
     """Build the manifest dict from the pins above."""
     ws_base = (
@@ -145,14 +154,24 @@ def build_manifest() -> dict:
                 "source": f"github:ufal/whisper_streaming@{STT_SERVER_REV}",
                 "install_dir": "stt/server",
                 "requirements": "Bundled Python + faster-whisper env (stt-runtime).",
-                "files": [
-                    {
-                        "path": path,
-                        "url": f"{ws_base}/{path}",
-                        "size": size,
-                    }
-                    for path, size in sorted(STT_SERVER_FILES.items())
-                ],
+                "files": sorted(
+                    [
+                        {
+                            "path": path,
+                            "url": f"{ws_base}/{path}",
+                            "size": size,
+                        }
+                        for path, size in STT_SERVER_FILES.items()
+                    ]
+                    + [
+                        {
+                            "path": "whisper_online_server.py",
+                            "vendored": "stt_server/whisper_online_server.py",
+                            "size": _vendored_server_size(),
+                        }
+                    ],
+                    key=lambda f: f["path"],
+                ),
             },
             {
                 "id": "stt-runtime",
