@@ -504,6 +504,10 @@ async function shutdown() {
 
 if (require.main === module || process.env.FAMILIAR_ELECTRON_MAIN) {
   if (process.platform === 'linux') {
+    // Electron's Wayland screencast portal is unreliable on supported
+    // desktop environments; XWayland keeps display/system-audio capture on
+    // the tested Chromium path.
+    app.commandLine.appendSwitch('ozone-platform', 'x11');
     const features = app.commandLine.getSwitchValue('enable-features');
     app.commandLine.appendSwitch('enable-features',
       [features, 'PulseaudioLoopbackForScreenShare'].filter(Boolean).join(','));
