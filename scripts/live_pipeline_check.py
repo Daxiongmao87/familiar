@@ -44,8 +44,8 @@ async def main() -> None:
     for _uid, text in samples:
         t0 = time.time()
         try:
-            is_trig, kind = await detect_trigger(gw, text)
-            print(f"  trigger={is_trig!s:5} kind={kind:8} ({time.time()-t0:5.1f}s)  {text!r}")
+            is_trig = await detect_trigger(gw, text)
+            print(f"  trigger={is_trig!s:5} ({time.time()-t0:5.1f}s)  {text!r}")
         except Exception as e:
             print(f"  classifier ERROR: {type(e).__name__}: {e}")
             break

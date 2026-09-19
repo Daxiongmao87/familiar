@@ -361,3 +361,62 @@ async def test_stt_health_5xx_reports_unreachable() -> None:
     reachable, detail = await gw.stt_health()
     assert reachable is False
     assert "503" in detail
+
+
+@pytest.mark.asyncio
+async def test_chat_thinking_param_injects_template_kwarg() -> None:
+    """thinking=False sends chat_template_kwargs.enable_thinking=false."""
+    captured: dict[str, Any] = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(req.content)
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "ok"}}]}
+        )
+
+    gw = _build(handler)
+    await gw.chat("synthesis", [{"role": "user", "content": "hi"}], thinking=False)
+    assert captured["body"]["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+@pytest.mark.asyncio
+async def test_chat_thinking_none_leaves_body_untouched() -> None:
+    """Omitting thinking sends no template kwarg (config decides)."""
+    captured: dict[str, Any] = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(req.content)
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "ok"}}]}
+        )
+
+    gw = _build(handler)
+    await gw.chat("synthesis", [{"role": "user", "content": "hi"}])
+    assert "chat_template_kwargs" not in captured["body"]
+
+
+@pytest.mark.asyncio
+async def test_chat_thinking_overrides_config_extra_body() -> None:
+    """Explicit thinking wins over a conflicting config value."""
+    captured: dict[str, Any] = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(req.content)
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "ok"}}]}
+        )
+
+    cfg = load_config_dict({
+        "models": {
+            "synthesis": {
+                "base_url": "http://test",
+                "model_id": "m",
+                "extra_body": {"chat_template_kwargs": {"enable_thinking": True}},
+            },
+            "stt": {"base_url": "http://test"},
+        }
+    })
+    gw = Gateway(cfg)
+    gw._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await gw.chat("synthesis", [{"role": "user", "content": "hi"}], thinking=False)
+    assert captured["body"]["chat_template_kwargs"] == {"enable_thinking": False}

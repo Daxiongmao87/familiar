@@ -102,14 +102,14 @@ def create_mock_app(state: MockState | None = None) -> FastAPI:
         else:
             props = []
         if "is_trigger" in props:
-            # Fast-lane classifier: route on the line's intent.
+            # Fast-lane classifier: binary verdict, no taxonomy.
             text = _content_of(req).lower()
             if any(w in text for w in ("search", "loot", "examine", "inspect")):
-                content = json.dumps({"is_trigger": True, "kind": "loot"})
+                content = json.dumps({"is_trigger": True})
             elif any(w in text for w in ("history", "lore", "who is", "what is", "background", "tell me")):
-                content = json.dumps({"is_trigger": True, "kind": "lore"})
+                content = json.dumps({"is_trigger": True})
             else:
-                content = json.dumps({"is_trigger": False, "kind": "other"})
+                content = json.dumps({"is_trigger": False})
         elif "fast" in model:
             # Agent ephemeral tier (fast role, free-form): grounded scene note.
             content = json.dumps(

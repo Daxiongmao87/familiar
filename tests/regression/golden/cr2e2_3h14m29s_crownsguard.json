@@ -1,0 +1,272 @@
+[
+  {
+    "t": 0.0,
+    "text": "Is there only one guard?",
+    "type": "transcript",
+    "user_id": "sam"
+  },
+  {
+    "t": 2.0,
+    "text": "It's two guards, side by side. These watches, they patrol in pairs.",
+    "type": "transcript",
+    "user_id": "dm"
+  },
+  {
+    "t": 5.0,
+    "text": "Are we in like an alleyway, or in the street?",
+    "type": "transcript",
+    "user_id": "marisha"
+  },
+  {
+    "t": 7.0,
+    "text": "You guys are keeping off to the side. You're all on the outskirts of the lake and almost made your way out of the city towards where the--",
+    "type": "transcript",
+    "user_id": "dm"
+  },
+  {
+    "t": 13.0,
+    "text": "Go in the lake. Quick, go into the lake!",
+    "type": "transcript",
+    "user_id": "laura"
+  },
+  {
+    "t": 15.0,
+    "text": "I cast Disguise Self, and I turn myself into a crownsguard.",
+    "type": "transcript",
+    "user_id": "travis"
+  },
+  {
+    "t": 18.0,
+    "text": "Disguise Self and follow suit.",
+    "type": "transcript",
+    "user_id": "liam"
+  },
+  {
+    "t": 21.0,
+    "text": "You do as well?",
+    "type": "transcript",
+    "user_id": "dm"
+  },
+  {
+    "t": 22.0,
+    "text": "Yeah.",
+    "type": "transcript",
+    "user_id": "liam"
+  },
+  {
+    "t": 23.0,
+    "text": "All right. So you both become crownsguard.",
+    "type": "transcript",
+    "user_id": "dm"
+  },
+  {
+    "t": 34.0,
+    "text": "I'm in my black hood. I've got my hood up now.",
+    "type": "transcript",
+    "user_id": "taliesin"
+  },
+  {
+    "t": 37.0,
+    "text": "Anywhere to hide?",
+    "type": "transcript",
+    "user_id": "sam"
+  },
+  {
+    "t": 39.0,
+    "text": "There are some small alcoves, but you guys are out in the open, now. They've seen you.",
+    "type": "transcript",
+    "user_id": "dm"
+  },
+  {
+    "t": 44.0,
+    "text": "All of us?",
+    "type": "transcript",
+    "user_id": "marisha"
+  },
+  {
+    "t": 47.0,
+    "text": "You don't know. They've seen you. They've called to you, and then both of you guys disguised yourselves. What are you doing?",
+    "type": "transcript",
+    "user_id": "dm"
+  },
+  {
+    "t": 54.0,
+    "text": "I walk into the lake and crouch down?",
+    "type": "transcript",
+    "user_id": "laura"
+  },
+  {
+    "t": 58.0,
+    "text": "Jester walks up and wades in about six inches of water and just-- gives her best duck impression.",
+    "type": "transcript",
+    "user_id": "dm"
+  },
+  {
+    "t": 66.0,
+    "text": "I will take off my mask and start attacking Caleb in a convincing fashion. Not to draw blood but-- yeah.",
+    "type": "transcript",
+    "user_id": "sam"
+  },
+  {
+    "t": 79.0,
+    "text": "Make a deception check.",
+    "type": "transcript",
+    "user_id": "dm"
+  },
+  {
+    "t": 80.0,
+    "text": "Deception check?",
+    "type": "transcript",
+    "user_id": "sam"
+  },
+  {
+    "t": 81.0,
+    "text": "Yes.",
+    "type": "transcript",
+    "user_id": "dm"
+  },
+  {
+    "t": 82.0,
+    "text": "Oh.",
+    "type": "transcript",
+    "user_id": "sam"
+  },
+  {
+    "t": 84.0,
+    "text": "Can I start going (groans) Oh get off, you little beast! To help with the illusion?",
+    "type": "transcript",
+    "user_id": "liam"
+  },
+  {
+    "t": 90.0,
+    "text": "(snarling noises)",
+    "type": "transcript",
+    "user_id": "sam"
+  },
+  {
+    "t": 92.0,
+    "text": "Sure, make a deception check.",
+    "type": "transcript",
+    "user_id": "dm"
+  },
+  {
+    "t": 94.0,
+    "text": "Oh, my deception check was a three minus three.",
+    "type": "transcript",
+    "user_id": "sam"
+  },
+  {
+    "t": 96.0,
+    "text": "But roll with advantage.",
+    "type": "transcript",
+    "user_id": "liam"
+  },
+  {
+    "t": 98.0,
+    "text": "At advantage?",
+    "type": "transcript",
+    "user_id": "sam"
+  },
+  {
+    "t": 99.0,
+    "text": "I'm helping you, you little--",
+    "type": "transcript",
+    "user_id": "liam"
+  },
+  {
+    "t": 101.0,
+    "text": "Seven minus three!",
+    "type": "transcript",
+    "user_id": "sam"
+  },
+  {
+    "t": 102.0,
+    "text": "Oh no!",
+    "type": "transcript",
+    "user_id": "liam"
+  },
+  {
+    "t": 104.0,
+    "text": "Okay so as soon as these two crownsguard see this, they go \"Shit!\" They pull their blades and they start charging you, Nott, to try and protect their other crownsguard--",
+    "type": "transcript",
+    "user_id": "dm"
+  },
+  {
+    "t": 116.0,
+    "text": "I take Nott and slam her into a wall as hard as I can and say: Down you beast!",
+    "type": "transcript",
+    "user_id": "liam"
+  },
+  {
+    "t": 122.0,
+    "text": "All right, as you rush up in a jog, blades drawn, one of them is going to go ahead and attempt to strike.",
+    "type": "transcript",
+    "user_id": "dm"
+  },
+  {
+    "t": 129.0,
+    "text": "Oh god! Sure.",
+    "type": "transcript",
+    "user_id": "sam"
+  },
+  {
+    "t": 134.0,
+    "text": "That is going to be a 14 to hit.",
+    "type": "transcript",
+    "user_id": "dm"
+  },
+  {
+    "t": 136.0,
+    "text": "Miss!",
+    "type": "transcript",
+    "user_id": "sam"
+  },
+  {
+    "t": 137.0,
+    "text": "So you manage to (squeaks) and narrowly dodge the blade as it strikes through the back of your cloak and pins it to the side of a wooden pole that is on the outside of an overhang where some of the fish are being left out to dry and turn into fish jerky. It holds you in place as you're snarling and looking scared. The other one pulls out his blade and says \"Where did this thing come from!?\"",
+    "type": "transcript",
+    "user_id": "dm"
+  },
+  {
+    "t": 159.0,
+    "text": "I have it! And I punch Nott right in the face.",
+    "type": "transcript",
+    "user_id": "liam"
+  },
+  {
+    "t": 161.0,
+    "text": "Oh!",
+    "type": "transcript",
+    "user_id": "sam"
+  },
+  {
+    "t": 162.0,
+    "text": "All right, you take one point of bludgeoning damage, Nott, and blood just (flowing noise) from the nose.",
+    "type": "transcript",
+    "user_id": "dm"
+  },
+  {
+    "t": 169.0,
+    "text": "I have this. We're taking these people across to jail.",
+    "type": "transcript",
+    "user_id": "liam"
+  },
+  {
+    "t": 172.0,
+    "text": "(Regal voice) Indeed, stay our blade, please, obviously he can handle this.",
+    "type": "transcript",
+    "user_id": "travis"
+  },
+  {
+    "t": 176.0,
+    "text": "Don't you fucking move you little green piece of filth.",
+    "type": "transcript",
+    "user_id": "liam"
+  },
+  {
+    "t": 179.0,
+    "text": "(spits)",
+    "type": "transcript",
+    "user_id": "sam"
+  }
+]

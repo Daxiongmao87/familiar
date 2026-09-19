@@ -20,7 +20,9 @@ from .config import AppConfig
 from .embedder import Embedder
 from .index_store import IndexStore
 from .lexicon import correct_text, link_entities
+from .jevworker import JevWorker
 from .monitor import TranscriptMonitor
+from .openjev import Debouncer, OpenjevGate
 from .sources.base import AudioSource
 from .staging import StagedContext, prefetch_entity, render_staged_block
 from .streaming_stt import StreamingSttAdapter
@@ -166,9 +168,10 @@ class SessionEngine:
 
     v2: triggers and manual queries route to a WorkerAgent (an agentic tool
     loop) instead of a fixed embed->retrieve->synthesize pipeline. The fast
-    lane (detect_trigger) picks the tier: durable kinds (loot/rules) produce
-    cards; the rest produce ephemeral scene context. A background
-    TranscriptMonitor proactively surfaces alerts and auto-marks cards done.
+    lane verdict is binary — no taxonomy; the openjev gate picks the tier
+    (card/ephemeral) per trigger, the legacy path defaults triggers to
+    cards. A background TranscriptMonitor proactively surfaces alerts and
+    auto-marks cards done.
     """
 
     def __init__(
@@ -269,6 +272,40 @@ class SessionEngine:
         )
         self._prefetch_tasks: set[asyncio.Task] = set()
         self._prefetch_inflight = 0  # throttle bound for concurrent prefetches
+        # Openjev decision gate (binary deploy/wait trigger). Off by default;
+        # when disabled the legacy regex + fast-LLM path below is untouched.
+        oj_cfg = getattr(cfg, "openjev", None)
+        self._openjev_gate: OpenjevGate | None = (
+            OpenjevGate(
+                base_url=oj_cfg.base_url,
+                threshold=oj_cfg.threshold,
+                timeout_s=oj_cfg.timeout_s,
+                recent_n=oj_cfg.recent_n,
+            )
+            if oj_cfg is not None and getattr(oj_cfg, "enabled", False)
+            else None
+        )
+        self._openjev_debouncer: Debouncer | None = (
+            Debouncer(window_s=getattr(oj_cfg, "debounce_s", 30.0))
+            if self._openjev_gate is not None
+            else None
+        )
+        self._jev_worker: JevWorker | None = (
+            JevWorker(
+                gw,
+                store,
+                project_path,
+                cfg.agent,
+                world_map=world_map,
+                embedder=embedder,
+                tool_registry=tool_registry,
+                gate=self._openjev_gate,
+                entries=entries,
+            )
+            if self._openjev_gate is not None
+            and getattr(oj_cfg, "directed_worker", False)
+            else None
+        )
 
     def _staged_block(self, entities: list[str]) -> tuple[str, list[str]]:
         """Render advisory staged excerpts for ``entities``.
@@ -667,15 +704,52 @@ class SessionEngine:
             return
 
         t_lane0 = time.monotonic()
-        is_trigger, kind = await detect_trigger(self.gw, u.text)
-        detect_ms = (time.monotonic() - t_lane0) * 1000.0
+        oj_info: dict[str, Any] | None = None
+        tier = "card"
+        if self._openjev_gate is not None:
+            window = [f"{w.name or w.user_id}: {w.text}" for w in self._recent]
+            dec = await self._openjev_gate.decide(window)
+            is_trigger = dec.deploy
+            tier = dec.tier
+            detect_ms = dec.latency_s * 1000.0
+            oj_info = {
+                "p_deploy": round(dec.prob, 4),
+                "tier": tier,
+                "p_tier": round(dec.tier_prob, 4),
+                "error": dec.error,
+            }
+            debounced = bool(
+                is_trigger
+                and self._openjev_debouncer is not None
+                and self._openjev_debouncer.check(time.monotonic())
+            )
+            # Every gate verdict is published — waits included — so recall
+            # can be tuned on evidence instead of blind. Gate-only event;
+            # the legacy path emits nothing here.
+            self.on_event(
+                {
+                    "type": "trigger_verdict",
+                    "user_id": u.user_id,
+                    "text": u.text[:120],
+                    "deploy": bool(is_trigger and not debounced),
+                    "p_deploy": round(dec.prob, 4),
+                    "debounced": debounced,
+                    "error": dec.error,
+                    "t": time.time(),
+                }
+            )
+            if debounced:
+                return
+        else:
+            is_trigger = await detect_trigger(self.gw, u.text)
+            detect_ms = (time.monotonic() - t_lane0) * 1000.0
         if not is_trigger:
             return
 
         ctx = {
             "utterance": u.text,
             "entities": mentioned,
-            "kind": kind,
+            "tier": tier,
             "recent": list(self._recent)[-5:],
         }
         job = _make_job("trigger", ctx, Priority.TRIGGER, context_window_s=120.0)
@@ -685,26 +759,29 @@ class SessionEngine:
 
         await self._submit_fire(job, _work)
         # Fast-lane timing, published so the session log and tools/latency_probe
-        # can attribute the transcript -> answer gap: detect_trigger (fast LLM)
-        # vs everything after it (context assembly + agent work).
-        self.on_event(
-            {
-                "type": "turn_latency",
-                "user_id": u.user_id,
-                "text": u.text[:120],
-                "kind": kind,
-                "tier": self._tier_for_kind(kind),
-                "detect_ms": round(detect_ms, 1),
-                "lane_ms": round((time.monotonic() - t_lane0) * 1000.0, 1),
-                "t": time.time(),
-            }
-        )
+        # can attribute the transcript -> answer gap: detect_trigger (fast LLM
+        # or openjev gate) vs everything after it (context assembly + agent
+        # work). The openjev key exists only when the gate is enabled, so the
+        # legacy event shape is byte-identical when it is off.
+        ev: dict[str, Any] = {
+            "type": "turn_latency",
+            "user_id": u.user_id,
+            "text": u.text[:120],
+            "tier": tier,
+            "detect_ms": round(detect_ms, 1),
+            "lane_ms": round((time.monotonic() - t_lane0) * 1000.0, 1),
+            "t": time.time(),
+        }
+        if oj_info is not None:
+            ev["openjev"] = oj_info
+        self.on_event(ev)
 
     async def manual_query(self, text: str) -> None:
         ctx = {
             "utterance": text,
             "entities": [],
-            "kind": "manual",
+            "manual": True,
+            "tier": "card",
             "recent": list(self._recent)[-5:],
         }
         job = _make_job("manual_query", ctx, Priority.MANUAL, context_window_s=600.0)
@@ -713,13 +790,6 @@ class SessionEngine:
             return await self._generate_card(ctx)
 
         await self._submit_fire(job, _work)
-
-    # -- tier routing ------------------------------------------------------
-    def _tier_for_kind(self, kind: str) -> str:
-        """Map a fast-lane trigger kind (or 'manual') to an output tier."""
-        if kind in self.cfg.agent.card_kinds or kind == "manual":
-            return "card"
-        return "ephemeral"
 
     def _transcript_text(self) -> str:
         return "\n".join(
@@ -738,26 +808,15 @@ class SessionEngine:
 
     def _task_for_ctx(self, ctx: dict) -> str:
         utterance = ctx.get("utterance", "")
-        kind = ctx.get("kind", "other")
         entities = ctx.get("entities", []) or []
-        if kind == "manual":
+        if ctx.get("manual"):
             return f"The DM asks directly: {utterance}"
-        kind_hint = {
-            "loot": (
-                "a SKILL-CHECK/LOOT card: the DM needs to know what a search can "
-                "find and at what DC. For each findable thing, name the skill and "
-                "DC to find/notice it (e.g. Perception <DC> to spot the hidden "
-                "pouch, Investigation <DC> to find the secret compartment), the "
-                "quantity, value, and any DC to use it. body_md must be a markdown "
-                "table with columns: Find | Skill / DC | Qty | Value | Notes — and "
-                "the same rows as structured items, each with dc_find set. Never "
-                "return a bare price list; a search always costs a roll."
-            ),
-            "rules": "a RULING card: the DC, the skill, and the ruling",
-            "lore": "a short, verified lore / scene context note",
-        }.get(kind, "a concise, verified answer")
         ent = f" Entities mentioned: {', '.join(entities)}." if entities else ""
-        return f"The DM triggered a {kind} intent. Produce {kind_hint}.{ent}"
+        return (
+            "A live moment needs a DM artifact. Produce what the evidence "
+            "supports — table, ruling, briefing, or note. "
+            f"Trigger: {utterance}.{ent}"
+        )
 
     async def _generate_card(self, ctx: dict) -> Card | None:
         """Run the agentic worker for a trigger/manual query.
@@ -765,7 +824,7 @@ class SessionEngine:
         Card tier returns a Card (the pool's on_card fires). Ephemeral tier
         publishes a scene_context event and returns None.
         """
-        tier = self._tier_for_kind(ctx.get("kind", "other"))
+        tier = ctx.get("tier", "card")
         task = self._task_for_ctx(ctx)
         transcript = self._transcript_text()
         trigger_portion = ctx.get("utterance", "")
@@ -781,8 +840,9 @@ class SessionEngine:
                 staged_matched[:8],
                 len(staged_block),
             )
+        worker = self._jev_worker if self._jev_worker is not None else self._agent
         try:
-            result = await self._agent.run(
+            result = await worker.run(
                 task,
                 tier,
                 trigger_portion=trigger_portion,
@@ -1116,6 +1176,8 @@ class SessionEngine:
         self._prefetch_tasks.clear()
         if self._stt_adapter is not None:
             await self._stt_adapter.close_all()
+        if self._openjev_gate is not None:
+            await self._openjev_gate.aclose()
         await self._stt_queue.close()
         for task in list(self._pending_submits):
             task.cancel()

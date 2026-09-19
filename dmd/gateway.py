@@ -97,6 +97,7 @@ class Gateway:
         json_schema: dict | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        thinking: bool | None = None,
     ) -> str | dict:
         ep = self._resolve(role)
         if not ep.base_url:
@@ -107,6 +108,13 @@ class Gateway:
         body.update(ep.extra_body)
         if temperature is not None:
             body["temperature"] = temperature
+        if thinking is not None:
+            # Optional per-call thinking switch (llama.cpp honors it via
+            # chat_template_kwargs; a top-level flag is ignored). Explicit
+            # callers win over config extra_body.
+            merged = dict(body.get("chat_template_kwargs") or {})
+            merged["enable_thinking"] = thinking
+            body["chat_template_kwargs"] = merged
         # Slot-leak guard: max_tokens is ALWAYS sent (see module docstring).
         body["max_tokens"] = self._cap_max_tokens(role, ep, max_tokens)
         if json_schema is not None:

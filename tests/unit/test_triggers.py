@@ -8,7 +8,8 @@ Precedence is deterministic-first for latency (see dmd/triggers.py):
 - the fast-lane LLM is only reached when the regex is silent.
 - the fast-lane call is hard-bounded: a slow/erroring LLM can never block the
   lane past its timeout, and always carries a capped max_tokens (slot-leak).
-- kind passthrough / malformed-result fallback.
+- the verdict is binary (no taxonomy); legacy kind keys are ignored and
+  malformed results fall back to the rule verdict.
 """
 
 from __future__ import annotations
@@ -61,15 +62,11 @@ def test_detect_trigger_rule_does_not_match(text: str) -> None:
 
 
 async def test_detect_trigger_no_gateway_uses_rule_fallback_positive() -> None:
-    is_trigger, kind = await detect_trigger(None, "I search the body")
-    assert is_trigger is True
-    assert kind == "loot"
+    assert await detect_trigger(None, "I search the body") is True
 
 
 async def test_detect_trigger_no_gateway_uses_rule_fallback_negative() -> None:
-    is_trigger, kind = await detect_trigger(None, "hello everyone")
-    assert is_trigger is False
-    assert kind == "other"
+    assert await detect_trigger(None, "hello everyone") is False
 
 
 # ---------------------------------------------------------------------------
@@ -136,11 +133,9 @@ async def test_rule_match_short_circuits_without_consulting_llm() -> None:
     """Regression (2026-09-05 Priority-1): the fast-lane LLM took 17-24s on the
     tiny reasoning endpoint and misfired on loot lines. A keyword match must
     return instantly WITHOUT any network call."""
-    gw = _FakeGw(chat_return={"is_trigger": False, "kind": "other"})
+    gw = _FakeGw(chat_return={"is_trigger": False})
     t0 = time.monotonic()
-    is_trigger, kind = await detect_trigger(gw, "I search the body")
-    assert is_trigger is True
-    assert kind == "loot"
+    assert await detect_trigger(gw, "I search the body") is True
     # The slow LLM was never reached.
     assert gw.calls == []
     assert time.monotonic() - t0 < 0.05
@@ -153,10 +148,8 @@ async def test_rule_match_short_circuits_without_consulting_llm() -> None:
 
 async def test_detect_trigger_fast_lane_classifies_when_rule_silent() -> None:
     # "hello everyone" is a rule non-match, but the fast lane says trigger.
-    gw = _FakeGw(chat_return={"is_trigger": True, "kind": "lore"})
-    is_trigger, kind = await detect_trigger(gw, "hello everyone")
-    assert is_trigger is True
-    assert kind == "lore"
+    gw = _FakeGw(chat_return={"is_trigger": True})
+    assert await detect_trigger(gw, "hello everyone") is True
     assert len(gw.calls) == 1
     assert gw.calls[0]["role"] == "fast"
 
@@ -170,12 +163,10 @@ async def test_slow_llm_is_hard_bounded_and_falls_back(monkeypatch: pytest.Monke
     """A fast-lane call that outlives the timeout must not hold the utterance:
     the classifier returns the regex verdict (not-a-trigger) within budget."""
     monkeypatch.setattr(triggers_mod, "LANE_CLASSIFY_TIMEOUT_S", 0.2)
-    gw = _FakeGw(chat_return={"is_trigger": True, "kind": "loot"}, chat_sleep=5.0)
+    gw = _FakeGw(chat_return={"is_trigger": True}, chat_sleep=5.0)
     t0 = time.monotonic()
-    is_trigger, kind = await detect_trigger(gw, "tell me a story about the keep")
+    assert await detect_trigger(gw, "tell me a story about the keep") is False
     elapsed = time.monotonic() - t0
-    assert is_trigger is False
-    assert kind == "other"
     # bounded well under the sleep it was waiting on
     assert elapsed < 1.0, f"classifier not bounded: {elapsed:.2f}s"
 
@@ -188,34 +179,24 @@ async def test_slow_llm_is_hard_bounded_and_falls_back(monkeypatch: pytest.Monke
 async def test_detect_trigger_falls_back_when_gw_chat_raises() -> None:
     # Rule MATCHES => fast path returns the trigger without touching the LLM.
     gw = _FakeGw(chat_raises=True)
-    is_trigger, kind = await detect_trigger(gw, "I search the body")
-    assert is_trigger is True
-    assert kind == "loot"
+    assert await detect_trigger(gw, "I search the body") is True
     assert gw.calls == []
 
 
 async def test_detect_trigger_falls_back_when_gw_chat_raises_negative() -> None:
     gw = _FakeGw(chat_raises=True)
-    # Rule does NOT match => LLM raises => fallback is (False, "other").
-    is_trigger, kind = await detect_trigger(gw, "hello everyone")
-    assert is_trigger is False
-    assert kind == "other"
+    # Rule does NOT match => LLM raises => fallback is not-a-trigger.
+    assert await detect_trigger(gw, "hello everyone") is False
 
 
 # ---------------------------------------------------------------------------
-# detect_trigger: kind passthrough from fast lane.
+# detect_trigger: legacy kind keys are ignored; only is_trigger is read.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "kind",
-    ["loot", "lore", "rules", "other"],
-)
-async def test_detect_trigger_kind_passthrough(kind: str) -> None:
-    gw = _FakeGw(chat_return={"is_trigger": True, "kind": kind})
-    is_trigger, out_kind = await detect_trigger(gw, "a prose question with no keyword")
-    assert is_trigger is True
-    assert out_kind == kind
+async def test_detect_trigger_ignores_legacy_kind_keys() -> None:
+    gw = _FakeGw(chat_return={"is_trigger": True, "kind": "lore"})
+    assert await detect_trigger(gw, "a prose question with no keyword") is True
 
 
 # ---------------------------------------------------------------------------
@@ -223,13 +204,12 @@ async def test_detect_trigger_kind_passthrough(kind: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_detect_trigger_malformed_fast_lane_falls_back_to_rule() -> None:
-    # Rule silent here, so the LLM is consulted; a bad kind falls back to
-    # the regex verdict (not-a-trigger).
-    gw = _FakeGw(chat_return={"is_trigger": True, "kind": "bogus"})
-    is_trigger, kind = await detect_trigger(gw, "the wind picks up outside")
-    assert is_trigger is False
-    assert kind == "other"
+@pytest.mark.parametrize("bad", [{"is_trigger": "yes"}, {"nope": 1}, [True], "true", None])
+async def test_detect_trigger_malformed_fast_lane_falls_back_to_rule(bad: Any) -> None:
+    # Rule silent here, so the LLM is consulted; a non-boolean verdict falls
+    # back to the regex verdict (not-a-trigger).
+    gw = _FakeGw(chat_return=bad)
+    assert await detect_trigger(gw, "the wind picks up outside") is False
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +220,7 @@ async def test_detect_trigger_malformed_fast_lane_falls_back_to_rule() -> None:
 
 
 async def test_detect_trigger_fast_lane_passes_capped_max_tokens() -> None:
-    gw = _FakeGw(chat_return={"is_trigger": False, "kind": "other"})
+    gw = _FakeGw(chat_return={"is_trigger": False})
     await detect_trigger(gw, "hello everyone")
     assert gw.calls, "fast lane was not used"
     assert gw.calls[0]["max_tokens"] == triggers_mod.LANE_CLASSIFY_MAX_TOKENS

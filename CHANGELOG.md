@@ -2,6 +2,54 @@
 
 ## [Unreleased]
 
+- **Run `JevWorker` retrieval legs concurrently.** Campaign RAG + web
+  search for all terms now fire in one `asyncio.gather` instead of a
+  sequential per-term loop (term order and tool-call counts preserved;
+  empty terms skip the pointless relevance pass). Live: 9.7 s of leg
+  work in 4.0 s wall on a 4-term trigger. Patch (no contract change).
+- **Swap generation roles to `minicpm5-2b`.** synthesis + fast
+  `model_id` in `config.example.yaml` (and live `config.yaml`) now name
+  `minicpm5-2b`; prior-model references removed from code comments,
+  tests, and owner constraints, with a config pin + static guard
+  (`test_generation_roles_pin_minicpm5_2b`). Minor (endpoint contract
+  change while pre-1.0).
+- **Structured output for ephemeral note synthesis.** `JevWorker` now
+  requests `title`/`subtitle`/`body_md` JSON under a strict schema for
+  scene-note tier (card tier already had one) and renders the note
+  from the components, falling back to raw text when unparseable.
+  Verified live on minicpm5-2b with thinking disabled. Minor (worker
+  contract change while pre-1.0).
+- **Optional per-call thinking switch on `Gateway.chat`.** New
+  `thinking: bool | None` parameter injects
+  `chat_template_kwargs.enable_thinking` (the switch llama.cpp honors;
+  a top-level flag is ignored). Omitted by default; explicit callers
+  override config `extra_body`. Verified live on minicpm5-2b:
+  `thinking=False` answers directly, default burns all tokens on
+  reasoning. Minor (additive API while pre-1.0).
+- **Replace directed-worker retrieval with evidence-judged path.** New
+  `dmd/terms.py`: zero-LLM term collection (RAKE phrases fused with
+  lexicon matched spans, mass cutoff). `JevWorker` now collects terms,
+  ranks them in one JEV pass, searches both legs per term (campaign RAG
+  + web), judges the retrieved evidence with a new JEV relevance verb
+  (offline/online/both), and synthesizes from the kept legs. Removed the
+  route-first branch picker, LLM-written per-round queries, and the
+  sufficiency loop (`route()`, `sufficient()`, `ROUTE_*`, `SUFF_*`,
+  `max_rounds`). No presumed locations: relevance is judged after the
+  fact every trigger. Tests rewritten (`test_jevworker.py`,
+  `test_terms.py`, relevance/rank in `test_openjev.py`); live run
+  verified end to end. Minor (worker contract change while pre-1.0).
+- **Lock JEV gate prompt to production baseline jev-gate-v39.**
+  `dmd/openjev.py`: deploy/wait question and option descriptions set to the
+  validated "useful information work" wording (deploy first, wait second;
+  IDs stable; threshold default stays 0.50; state construction, debounce,
+  and per-verdict p_deploy publishing unchanged). New
+  `tests/regression/golden/jev_gate_v39.json` + live
+  `tests/regression/test_jev_gate_golden.py`: all nine golden cases must
+  classify correctly with separation gap ≥ 0.5 before any prompt, ordering,
+  transcript, model/quant, or readout change is accepted. Verified live:
+  9/9, gap 0.7854 reproducing the baseline. Minor (gate contract change
+  while pre-1.0).
+
 - Baseline commit: dmd/ package, web/ UI, test suite (unit/regression/e2e),
   SPEC.md, and tooling. Pre-1.0 foundation; no version tag yet.
   Non-release-affecting (initial import of existing work).
@@ -11,6 +59,63 @@
   files; no product behavior or contract change).
 
 ### Added
+- **CR 3-minute timed replay fixture.**
+  `tests/regression/golden/cr2e2_3h14m29s_crownsguard.json`: 45
+  timestamped, speaker-labeled transcript events (C2E2 VOD 3:14:29–3:17:29,
+  crownsguard confrontation: skill checks, advantage/help, attack rolls,
+  damage) in `replay_events.json` shape for timed live-play replay through
+  detection, retrieval, and card publishing. Patch (test-only, no behavior
+  change).
+- **Openjev trigger gate + timed transcript replay.**
+  New `dmd/openjev.py`: binary deploy/wait gate over openjev-serve
+  `/score` (no taxonomy at the gate; a second pass labels kind only on
+  deploy), fail-closed to wait, behind `openjev.enabled` (default off —
+  legacy path byte-identical). `SessionEngine` uses it in
+  `handle_utterance` when enabled and adds an `openjev` detail key to
+  `turn_latency` events only in that mode. New
+  `dmd/sources/transcript_replay.py` + `tools/replay_transcript.py`:
+  wall-clock-paced fixture injection into the real pipeline with model
+  overrides as CLI flags. Tests: `tests/unit/test_openjev.py` (9:
+  deploy/kind, threshold boundary, fail-closed transport/shape/timeout,
+  window cap, health) and `tests/unit/test_transcript_replay.py` (6:
+  load/validate, pacing, catch-up, fast mode). Live-verified: 45-entry
+  CR fixture replays in 179.4s wall, 10 deploys, 8 cards, avg gate
+  644ms. Minor (pre-1.0).
+- **JEV-routed deterministic worker + debounce + verdict logging.**
+  New `dmd/jevworker.py` (`JevWorker`, behind `openjev.directed_worker`):
+  passive RAG, JEV route (offline/online/both, failover both), bounded
+  retrieve/judge rounds per branch (LLM terms, system executes, JEV
+  sufficiency, failover more), one synthesis call; synthesis role on
+  every tier. `Debouncer` (per-kind, `debounce_s` default 30s) in
+  `dmd/openjev.py`; `trigger_verdict` events for every gate evaluation
+  (waits included) for recall tuning. Harness gains `--directed` and
+  `--max-concurrent`. Tests: route/sufficiency/debouncer cases plus
+  `tests/unit/test_jevworker.py` (6: offline/both routing, round loop
+  and bound, terms fallback, ephemeral text). Live-verified at
+  concurrency 1: 45 entries, 4 deploys, 6 debounced, 2 cards, 0
+  timeouts — but 31–40s per card (sufficiency too strict, rounds always
+  max out) and ruling bodies still invent DCs. Minor (pre-1.0).
+- **Trigger taxonomy removed (loot/lore/rules/other).**
+  `detect_trigger` returns bool; gate kind stage replaced by a JEV
+  card/ephemeral tier verdict on deploy (failover card); `Debouncer` is
+  a global window; `_tier_for_kind` and `AgentConfig.card_kinds` gone
+  (legacy triggers default to card tier, recall bias); `_task_for_ctx`
+  is generic evidence-shaped text; agent pre-grounding fires for every
+  card; `turn_latency`/`trigger_verdict` events drop kind; web Card
+  kinds setting removed. `Card.kind` (synthesis-chosen output label)
+  and `Job.kind` are untouched. Tests rewritten (`test_triggers`,
+  `test_openjev` tier/debouncer, `test_agent_grounding` always-ground,
+  e2e lore→card with hermetic search stub and drain-before-close);
+  golden file surgically updated (kind key dropped, loot tool_calls
+  0→1) with the two pre-existing golden reds unchanged in signature.
+  `config.yaml`'s `card_kinds` key is now ignored (left in place).
+  Live-verified: 45 entries → 2 deploys (both ephemeral), 8 debounced,
+  0 cards, 2 scene notes, 0 errors. Minor (pre-1.0).
+- **JEV lab form (`tools/jevlab/`).** Single-page form (state, question,
+  2–16 options, one-click presets for the two recorded JEV misses) scoring
+  through a stdlib same-origin proxy to the local `:8199` endpoint
+  (no CORS there; no WebLLM/WebGPU needed). Ships as a systemd unit
+  (`jevlab.service`, port 8093). Patch (dev tooling, no product change).
 - **Predictive-retrieval staging ("Predictive RAG", Priority-1 deliverable).**
   Anticipate instead of react: the transcript monitor's judge now also emits
   `situation` / `likely_next_events` / `predicted_entities` (fast role, capped
@@ -156,7 +261,8 @@
 
 - **Fast-lane classifier dominated the transcript→answer budget (live defect,
   Priority-1 measurement, 2026-09-05).** `detect_trigger` asked the fast role
-  (ling-3.0-tiny) for every utterance *before* the regex fallback. That
+  (the then-serving fast-role model) for every utterance *before* the regex
+  fallback. That
   endpoint is reasoning-first: a bare classification request emits ~180 hidden
   reasoning tokens and takes **17–24 s** (measured: `turn_latency`
   `detect_ms` = 23854 ms on the live baseline, and a direct timed POST to the

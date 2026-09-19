@@ -11,10 +11,10 @@ paragraph.
 ## Time-sensitivity is the core constraint
 - Answers must arrive in ~2-4s. The DM is mid-game.
 - Model endpoints (HARD): synthesis + fast roles -> http://192.168.0.220:8080/v1
-  model `ling/ling-3.0-tiny` — the RTX 3090 box, which was installed and
+  model `minicpm5-2b` — the RTX 3090 box, which was installed and
   benchmarked as the most performant. NOT local :8081/V100s. NOT the Arc.
 - NEVER use qwen 27b (or any big slow model) for familiar generation — it
-  violates the time-sensitivity constraint. ling-tiny on the 3090 is the call.
+  violates the time-sensitivity constraint. minicpm5-2b on the 3090 is the call.
 
 ## Cards are glanceable, never essays
 - < 700 chars body (hard cap enforced in `_normalize_card`).

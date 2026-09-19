@@ -770,7 +770,7 @@
     stt_base: 'cfg-stt-base', stt_dialect: 'cfg-stt-dialect', stt_key: 'cfg-stt-key', stt_extra: 'cfg-stt-extra',
     emb_provider: 'cfg-emb-provider', emb_model: 'cfg-emb-model', emb_key: 'cfg-emb-key',
     ag_timeout: 'cfg-agent-timeout', ag_max: 'cfg-agent-maxcalls', ag_eph: 'cfg-agent-ephcalls',
-    ag_web: 'cfg-agent-webtimeout', ag_cad: 'cfg-agent-cadence', ag_look: 'cfg-agent-lookback', ag_cards: 'cfg-agent-cardkinds',
+    ag_web: 'cfg-agent-webtimeout', ag_cad: 'cfg-agent-cadence', ag_look: 'cfg-agent-lookback',
     orch_conc: 'cfg-orch-conc', orch_job: 'cfg-orch-jobtimeout', orch_stale: 'cfg-orch-stale',
     stt_rate: 'cfg-stt-rate', stt_sil: 'cfg-stt-silence', stt_min: 'cfg-stt-minutter', stt_max: 'cfg-stt-maxchunk',
   };
@@ -813,7 +813,6 @@
       set('emb_provider', em.provider || 'local'); set('emb_model', em.model_id); setSecret('emb_key', em.api_key);
       setNum('ag_timeout', a.agent_timeout_s); setNum('ag_max', a.max_tool_calls); setNum('ag_eph', a.ephemeral_max_tool_calls);
       setNum('ag_web', a.web_timeout_s); setNum('ag_cad', a.monitor_cadence_s); setNum('ag_look', a.monitor_lookback);
-      if (Array.isArray(a.card_kinds)) set('ag_cards', a.card_kinds.join(', '));
       setNum('orch_conc', o.max_concurrent); setNum('orch_job', o.job_timeout_s); setNum('orch_stale', o.stale_after_s);
       setNum('stt_rate', sp.sample_rate); setNum('stt_sil', sp.silence_ms); setNum('stt_min', sp.min_utterance_ms); setNum('stt_max', sp.max_chunk_s);
       setSettingsStatus('', false);
@@ -842,7 +841,6 @@
     const synExtra = getExtra('syn_extra'); if (synExtra === null) return null;
     const fastExtra = getExtra('fast_extra'); if (fastExtra === null) return null;
     const sttExtra = getExtra('stt_extra'); if (sttExtra === null) return null;
-    const cards = (get('ag_cards') || '').split(',').map((x) => x.trim()).filter(Boolean);
     return {
       config: {
         project: { path: get('project_path') || null, name: get('project_name') || 'Untitled Campaign' },
@@ -858,7 +856,7 @@
         },
         agent: {
           agent_timeout_s: getNum('ag_timeout'), max_tool_calls: getNum('ag_max'), ephemeral_max_tool_calls: getNum('ag_eph'),
-          web_timeout_s: getNum('ag_web'), monitor_cadence_s: getNum('ag_cad'), monitor_lookback: getNum('ag_look'), card_kinds: cards,
+          web_timeout_s: getNum('ag_web'), monitor_cadence_s: getNum('ag_cad'), monitor_lookback: getNum('ag_look'),
         },
         orchestration: { max_concurrent: getNum('orch_conc'), job_timeout_s: getNum('orch_job'), stale_after_s: getNum('orch_stale') },
         stt_pipeline: { sample_rate: getNum('stt_rate'), silence_ms: getNum('stt_sil'), min_utterance_ms: getNum('stt_min'), max_chunk_s: getNum('stt_max') },

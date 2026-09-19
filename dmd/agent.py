@@ -123,7 +123,7 @@ _XML_ARGS_RE = re.compile(
 def _extract_hermes_call(t: str) -> dict[str, Any] | None:
     """Parse the Hermes-family XML tool-call format off the wire.
 
-    The configured local endpoints (e.g. ling-3.0-tiny) emit
+    The configured local endpoints (e.g. minicpm5-2b) emit
     ``HERMES-XML tool-call wire format`` — name + key/value args.
     regardless of the JSON protocol asked for in the prompt. The agent loop
     must read what the endpoint actually speaks (SPEC §12 swappable
@@ -289,13 +289,14 @@ class WorkerAgent:
             if tier == "card"
             else self.cfg.ephemeral_max_tool_calls
         )
-        # Deterministic pre-grounding for rules/ruling cards (owner directive
-        # 2026-09-05): fire ONE web_search BEFORE the model's first decode and
-        # hand it the results. Guarantees grounding without a second decode —
-        # ling-tiny is too slow to survive a push-back round-trip.
+        # Deterministic pre-grounding for every card (recall bias: no
+        # taxonomy left to say which cards need it): fire ONE web_search
+        # BEFORE the model's first decode and hand it the results. Guarantees
+        # grounding without a second decode — minicpm5-2b is too slow to
+        # survive a push-back round-trip.
         grounding_block = ""
         grounding_calls = 0
-        if tier == "card" and _is_rules_task(task):
+        if tier == "card":
             try:
                 hunt = await self._tool_web_search({"query": task[:240]})
                 results = hunt.get("results") or []
@@ -657,21 +658,10 @@ class WorkerAgent:
 # ---------------------------------------------------------------------------
 
 
-def _is_rules_task(task: str) -> bool:
-    """True when the task asks for a rules/ruling card that must be grounded.
-
-    The pipeline's task text embeds the kind hint (e.g. "a RULING card: the
-    DC, the skill, and the ruling"). Manual queries are grounded when they
-    mention rules/ruling intent.
-    """
-    t = (task or "").upper()
-    return "RULING" in t or "RULES" in t
-
-
 def _items_from_table(md: str) -> list[dict[str, Any]]:
     """Best-effort: extract structured items from a markdown table.
 
-    The worker schema asks the model for ``items`` with dc_find, but ling-tiny
+    The worker schema asks the model for ``items`` with dc_find, but minicpm5-2b
     often writes the skill-check table only into body_md. When items are
     absent, derive them from body rows like
     ``| Hidden pouch | Perception <n> | 1 | 150 gp | ... |`` where <n> is the

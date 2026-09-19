@@ -166,12 +166,6 @@ class AgentConfig(BaseModel):
     # requiring the verdict to repeat (or persist) across a grace window keeps
     # auto-resolve from closing cards early.
     resolve_grace_s: float = 20.0
-    card_kinds: list[str] = [
-        "loot",
-        "rules",
-    ]
-    # Fast-lane trigger kinds that map to the durable card tier
-    # (detect_trigger yields loot/lore/rules/other); the rest go ephemeral.
     search: SearchConfig = SearchConfig()
 
 
@@ -192,6 +186,18 @@ class StagingConfig(BaseModel):
     prefetch_k: int = 4  # excerpts stored per predicted entity
     max_predicted: int = 6  # cap predictions prefetched per monitor tick
     max_inject_chars: int = 6000  # ceiling on the injected staged block
+
+
+class OpenjevConfig(BaseModel):
+    """Openjev decision gate (binary deploy/wait trigger, no taxonomy)."""
+
+    enabled: bool = False  # off = legacy regex + fast-LLM trigger path
+    base_url: str = "http://127.0.0.1:8199"  # openjev-serve endpoint
+    threshold: float = 0.5  # P(deploy) at or above this deploys a worker
+    timeout_s: float = 3.0  # per scoring call; failures fail closed to wait
+    recent_n: int = 8  # transcript lines in the gate state window
+    debounce_s: float = 30.0  # redeploy suppression window in seconds (0 off)
+    directed_worker: bool = False  # JEV-routed deterministic worker (no agent loop)
 
 
 class SttPipelineConfig(BaseModel):
@@ -249,6 +255,7 @@ class AppConfig(BaseModel):
     agent: AgentConfig = AgentConfig()
     stt_pipeline: SttPipelineConfig = SttPipelineConfig()
     staging: StagingConfig = StagingConfig()
+    openjev: OpenjevConfig = OpenjevConfig()
     discord: DiscordConfig = DiscordConfig()
     server: ServerConfig = ServerConfig()
 

@@ -1,10 +1,11 @@
-"""Mandatory-grounding for rules/ruling cards.
+"""Mandatory grounding for every card.
 
-Owner directive 2026-09-05: worker agents must actually search before
-producing a rules/ruling card (bundled SearXNG). ling-tiny answers from
-memory and is too slow to survive a push-back round-trip, so rules tasks
-pre-ground deterministically: one web_search fires BEFORE the model's
-first decode and its results are handed to the model as context.
+Owner directive 2026-09-05, widened when trigger taxonomy was removed:
+with no kinds left to exempt by, worker agents pre-ground every card
+deterministically — one web_search fires BEFORE the model's first decode
+and its results are handed to the model as context. minicpm5-2b answers
+from memory and is too slow to survive a push-back round-trip. The
+ephemeral tier skips pre-grounding (notes, not references).
 """
 
 from __future__ import annotations
@@ -13,13 +14,13 @@ from typing import Any
 
 import pytest
 
-from dmd.agent import WorkerAgent, _is_rules_task
+from dmd.agent import WorkerAgent
 from dmd.config import AgentConfig, SearchConfig
 
 
 class _FakeGw:
     """Gateway stub: web_search tool returns grounded results; the model then
-    produces a rules card citing them."""
+    produces a card citing them."""
 
     def __init__(self) -> None:
         self.web_search_calls = 0
@@ -41,7 +42,7 @@ class _FakeGw:
                 '{"kind": "rules", "title": "Ruling: Grapple", '
                 f'"body_md": "{self.final_body}", "items": []}}'
             )
-        # Any other (non-rules) task: the model answers from repo context.
+        # Any other (non-grounded) task: the model answers from repo context.
         return (
             '{"kind": "loot", "title": "Loot", '
             '"body_md": "A pouch (dc_find 12)", "items": []}'
@@ -84,20 +85,13 @@ def _mk_agent(gw: Any) -> tuple[_RecordingWorker, AgentConfig]:
     return _RecordingWorker(gw, cfg), cfg
 
 
-def test_is_rules_task_detects_ruling() -> None:
-    assert _is_rules_task("Produce a RULING card: the DC, the skill")
-    assert _is_rules_task("The DM triggered a rules intent")
-    assert not _is_rules_task("Produce a LOOT card: quantities and values")
-    assert not _is_rules_task("what do we find")
-
-
 @pytest.mark.asyncio
-async def test_rules_task_pre_grounds_with_web_search() -> None:
+async def test_card_task_pre_grounds_with_web_search() -> None:
     gw = _FakeGw()
     agent, _ = _mk_agent(gw)
 
     res = await agent.run(
-        "The DM triggered a rules intent. Produce a RULING card: the DC, the skill, and the ruling.",
+        "Trigger: how do grappling rules work.",
         tier="card",
     )
     # The deterministic pre-grounding fired exactly one web_search.
@@ -110,12 +104,11 @@ async def test_rules_task_pre_grounds_with_web_search() -> None:
 
 
 @pytest.mark.asyncio
-async def test_loot_task_does_not_force_web_search() -> None:
-    """Loot cards are repo-grounded; the mandatory-search rule must not
-    force a web search on them (owner: loot comes from campaign lore)."""
+async def test_ephemeral_tier_skips_pre_grounding() -> None:
     gw = _FakeGw()
     agent, _ = _mk_agent(gw)
 
-    res = await agent.run("loot intent: what is on Brother Ulrich?", tier="card")
+    res = await agent.run("Trigger: what is on Brother Ulrich?", tier="ephemeral")
     assert agent._recorded == 0
-    assert res.card is not None
+    assert res.error is None
+    assert (res.text or "").strip() != ""

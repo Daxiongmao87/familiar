@@ -54,7 +54,7 @@ _MONITOR_SCHEMA: dict[str, Any] = {
         "likely_next_events": {"type": "array", "items": {"type": "string"}},
     },
     # The prediction fields are REQUIRED, not optional: verified live on the
-    # configured fast role (ling-3.0-tiny) that a tiny model skips optional
+    # configured fast role (minicpm5-2b) that a tiny model skips optional
     # fields entirely (returns only action), while schema-required fields are
     # enforced by the endpoint and always emitted — without this the staging
     # prefetch would never fire. Defaults to empty arrays when nothing is

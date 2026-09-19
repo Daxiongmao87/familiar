@@ -251,7 +251,7 @@ async def test_prediction_to_injection_round_trip(tmp_path: Any) -> None:
     ctx = {
         "utterance": "We loot Brother Alric's body",
         "entities": ["Brother Alric"],
-        "kind": "loot",
+        "tier": "card",
         "recent": [],
     }
     card = await engine._generate_card(ctx)
@@ -275,7 +275,7 @@ async def test_cache_miss_does_not_block_normal_path(tmp_path: Any) -> None:
     # block, and must still produce a card on the normal path.
     search_calls_before = store.search_calls
     embed_calls_before = embedder.embed_calls
-    ctx = {"utterance": "We loot his body", "entities": ["Brother Alric"], "kind": "loot", "recent": []}
+    ctx = {"utterance": "We loot his body", "entities": ["Brother Alric"], "tier": "card", "recent": []}
     card = await engine._generate_card(ctx)
     assert card is not None and card.status == "active"
     assert stub.calls[-1]["staged_block"] == ""

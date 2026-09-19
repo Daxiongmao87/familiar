@@ -85,7 +85,7 @@ async def test_streaming_final_dispatches_once(tmp_path, monkeypatch):
     events.clear()
 
     async def _never_trigger(gw, text):
-        return False, "none"
+        return False
 
     monkeypatch.setattr("dmd.pipeline.detect_trigger", _never_trigger)
     engine = _engine(tmp_path)
@@ -120,7 +120,7 @@ async def test_batch_twin_is_deduped(tmp_path, monkeypatch):
     events.clear()
 
     async def _never_trigger(gw, text):
-        return False, "none"
+        return False
 
     monkeypatch.setattr("dmd.pipeline.detect_trigger", _never_trigger)
     engine = _engine(tmp_path)

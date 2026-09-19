@@ -26,7 +26,7 @@ def test_items_from_clean_table() -> None:
 
 
 def test_items_from_malformed_leading_pipe() -> None:
-    # ling-tiny over-formats tables with a doubled leading pipe; the extractor
+    # minicpm5-2b over-formats tables with a doubled leading pipe; the extractor
     # must tolerate the blank first cell.
     md = (
         "| | Find | Skill / DC | Qty | Value | Notes | |\n"

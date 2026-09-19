@@ -14,9 +14,18 @@
 - Module boundaries and ownership (see `dmd/`): `server.py` (FastAPI app,
   WebSocket event bus, REST endpoints, entrypoint, and the live UI window),
   `voice_presence.py` (Discord DAVE E2EE voice presence), `sources/`
-  (`discord_src.py`, `browser.py`, `replay.py`), `vad.py` +
+  (`discord_src.py`, `browser.py`, `replay.py`, `transcript_replay.py`),
+  `vad.py` +
   `speaking_tracker.py` (utterance segmentation and per-speaker state),
   `pipeline.py` + `triggers.py` (orchestration and fast-lane triggers),
+  `openjev.py` (openjev deploy/wait gate),
+  `jevworker.py` (JEV-routed deterministic worker),
+  `agent.py` (legacy worker-agent loop), `monitor.py` (proactive
+  transcript monitor), `terms.py` (zero-LLM term collection),
+  `staging.py` (predictive-retrieval staging), `streaming_stt.py` +
+  `stt_health.py` (streaming STT client and endpoint health),
+  `attribution.py` + `player_state.py` + `world_map.py` (speaker
+  attribution, players, world context),
   `gateway.py` (role-based OpenAI-compatible model endpoints), `scanner.py`
   + `init_pass.py` (deterministic scan to doc graph and entity index),
   `lexicon.py` + `enrich.py` (lexicon artifact and enrichment lane),
@@ -43,13 +52,12 @@
 - Use the `skills-marketplace` skill to find skills that help with the work
   in this project, and download what is needed autonomously — do not wait
   to be asked for a capability that the marketplace already provides.
-- Agent artifacts are gitignored: the project's .gitignore covers the
-  artifacts agents produce (screenshots, captured test output, logs, other
-  ephemeral verification evidence), the agent instruction files themselves
-  (AGENTS.md, CLAUDE.md, .agents/, .omp/, .claude/, .opencode/, .cursor/),
-  and real configuration/environment files (.env, credentials, local
-  overrides), whose templates are committed instead. When a new kind of
-  artifact appears, add it to .gitignore (see RULES.md, "Evidence and
+- Ephemeral artifacts stay out of git: screenshots, captured test output,
+  logs, and other verification evidence are gitignored, as are real
+  configuration/environment files (.env, credentials, local overrides),
+  whose templates are committed instead. Agent instruction files
+  (AGENTS.md, .omp/, and siblings) are committed source. When a new kind
+  of artifact appears, add it to .gitignore (see RULES.md, "Evidence and
   artifacts", "Configuration and environment", "Agent artifacts").
 
 
@@ -194,3 +202,7 @@ A change is done when:
 - RULES.md is respected: hard rules unviolated, any over-long line is
   deliberate, ephemeral artifacts uncommitted;
 - residual risks are stated.
+
+## Conventions
+
+- Name test files `test_*.py`.
