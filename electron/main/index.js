@@ -63,6 +63,9 @@ function createWindow(name, opts) {
     },
   }, opts || {}));
   win.on('closed', () => { delete ctx.windows[name]; });
+  // The hidden inference window intentionally remains alive behind the UI.
+  // Closing the visible main window must still begin the full shutdown path.
+  if (name === 'main') win.on('closed', () => { app.quit(); });
   ctx.windows[name] = win;
   return win;
 }

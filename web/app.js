@@ -827,6 +827,7 @@
         const masked = v === '__MASKED__';
         el.value = masked ? '' : (v == null ? '' : v);
         el.setAttribute('data-was-masked', masked ? 'true' : 'false');
+        if (masked) el.placeholder = 'Configured — leave blank to keep current';
       };
       const setExtra = (id, v) => { const el = document.getElementById(S[id]); if (el) el.value = (v && Object.keys(v).length) ? JSON.stringify(v, null, 2) : '{}'; };
       const setNum = (id, v) => { const el = document.getElementById(S[id]); if (el && v != null) el.value = v; };
