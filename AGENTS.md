@@ -16,15 +16,16 @@
   `voice_presence.py` (Discord DAVE E2EE voice presence), `sources/`
   (`discord_src.py`, `browser.py`, `replay.py`, `transcript_replay.py`),
   `speaking_tracker.py` (per-speaker state),
-  `pipeline.py` + `triggers.py` (orchestration and fast-lane triggers),
-  `openjev.py` (openjev deploy/wait gate),
+  `pipeline.py` (orchestration),
+  `openjev.py` (openjev deploy/wait gate, sole trigger),
   `jevworker.py` (JEV-routed deterministic worker),
   `agent.py` (legacy worker-agent loop), `monitor.py` (proactive
   transcript monitor), `terms.py` (zero-LLM term collection),
   `staging.py` (predictive-retrieval staging), `streaming_stt.py` +
   `stt_health.py` (streaming STT client and endpoint health),
   `attribution.py` + `player_state.py` + `world_map.py` (speaker
-  attribution, players, world context),
+  attribution, players, world context), `attribution_review.py` (rolling
+  JEV reassessment of prior blocks as new context arrives),
   `gateway.py` (role-based OpenAI-compatible model endpoints), `scanner.py`
   + `init_pass.py` (deterministic scan to doc graph and entity index),
   `lexicon.py` + `enrich.py` (lexicon artifact and enrichment lane),

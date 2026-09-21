@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from typing import Any
 
 _MIN_SEG_OVERLAP_S = 0.15
+_MIN_COVERAGE = 0.50
+_MIN_MARGIN = 0.15
 
 
 @dataclass
@@ -35,6 +37,10 @@ class AttributedSegment:
     t_end: float
     speaker_label: str | None = None  # pyannote label (SPEAKER_00 …)
     name: str | None = None  # display name from the tracker, if known
+    candidates: dict[str, float] | None = None
+    coverage: float = 0.0
+    margin: float = 0.0
+    state: str = "unknown"  # certain | ambiguous | unknown
 
 
 def attribute_segments(
@@ -156,3 +162,55 @@ def attribute_whole(
         except Exception:
             name = None
     return uid, name
+
+
+def attribute_whole_evidence(
+    tracker: Any, t_start: float, t_end: float, fallback_user_id: str
+) -> AttributedSegment:
+    """Return an attribution with auditable overlap evidence.
+
+    Coverage and margin are evidence measurements, not calibrated model
+    probabilities. An ambiguous or unsupported window keeps the capture
+    identity rather than inventing a Discord member.
+    """
+    duration = max(t_end - t_start, 0.0)
+    if tracker is None or duration <= 0:
+        return AttributedSegment(fallback_user_id, "", t_start, t_end)
+    try:
+        overlaps = tracker.overlaps_during(t_start, t_end)
+    except Exception:
+        overlaps = {}
+    candidates = {
+        str(uid): round(max(0.0, value), 4) for uid, value in overlaps.items()
+    }
+    ranked = sorted(candidates.items(), key=lambda item: item[1], reverse=True)
+    if not ranked:
+        return AttributedSegment(
+            fallback_user_id, "", t_start, t_end, candidates=candidates, state="unknown"
+        )
+    uid, winner = ranked[0]
+    runner_up = ranked[1][1] if len(ranked) > 1 else 0.0
+    coverage = min(1.0, winner / duration)
+    margin = max(0.0, (winner - runner_up) / duration)
+    if winner < min(_MIN_SEG_OVERLAP_S, duration) or coverage < _MIN_COVERAGE:
+        state = "unknown"
+    elif len(ranked) > 1 and margin < _MIN_MARGIN:
+        state = "ambiguous"
+    else:
+        state = "certain"
+    if state != "certain":
+        return AttributedSegment(
+            fallback_user_id, "", t_start, t_end, candidates=candidates,
+            coverage=coverage, margin=margin, state=state,
+        )
+    name = None
+    get_name = getattr(tracker, "name_of", None)
+    if callable(get_name):
+        try:
+            name = get_name(uid)
+        except Exception:
+            name = None
+    return AttributedSegment(
+        uid, "", t_start, t_end, name=name, candidates=candidates,
+        coverage=coverage, margin=margin, state=state,
+    )

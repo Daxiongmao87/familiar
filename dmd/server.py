@@ -25,7 +25,107 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 QUEUE_MAX = 512
+DEBUG_FILE_MAX_BYTES = 5 * 1024 * 1024
 BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def _debug_enabled() -> bool:
+    """Return whether the desktop shell requested diagnostic event logging."""
+    return os.environ.get("DMD_DEBUG", "").strip().lower() in {"1", "true", "yes"}
+
+
+def _configure_debug_logging() -> None:
+    """Emit backend INFO logs to stderr for Electron's redacted debug sink."""
+    if not _debug_enabled():
+        return
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    logging.getLogger("dmd").setLevel(logging.INFO)
+    logging.getLogger(__name__).info("backend debug logging enabled")
+
+
+def _log_debug_event(event: dict[str, Any]) -> None:
+    """Log the diagnostic subset of a live event without dumping card bodies."""
+    if not _debug_enabled():
+        return
+    kind = str(event.get("type", "unknown"))
+    if kind in {"transcript", "transcript_revision"}:
+        _append_transcript(event)
+    if kind not in {
+        "transcript",
+        "transcript_partial",
+        "transcript_revision",
+        "trigger_verdict",
+        "turn_latency",
+        "stt_health",
+        "stt_latency",
+        "job_dropped",
+        "card",
+    }:
+        return
+    fields = {
+        key: event[key]
+        for key in (
+            "user_id",
+            "id",
+            "name",
+            "text",
+            "deploy",
+            "debounced",
+            "error",
+            "kind",
+            "reason",
+            "detect_ms",
+            "lane_ms",
+            "healthy",
+            "detail",
+            "stt_ms",
+            "post_speech_ms",
+        )
+        if key in event
+    }
+    card = event.get("card")
+    if isinstance(card, dict):
+        fields["card"] = {
+            key: card.get(key) for key in ("id", "kind", "title", "status")
+        }
+    logging.getLogger(__name__).info(
+        "live_event type=%s data=%s",
+        kind,
+        json.dumps(fields, ensure_ascii=True, default=str),
+    )
+
+
+def _append_transcript(event: dict[str, Any]) -> None:
+    """Append one finalized utterance to the private, bounded debug transcript."""
+    target = os.environ.get("DMD_TRANSCRIPT_LOG", "").strip()
+    if not target:
+        return
+    path = Path(target)
+    record = {
+        "type": event.get("type", "transcript"),
+        "id": event.get("id"),
+        "t": event.get("t"),
+        "user_id": str(event.get("user_id", "")),
+        "name": event.get("name"),
+        "text": str(event.get("text", "")),
+        "attribution": event.get("attribution"),
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if path.exists() and path.stat().st_size >= DEBUG_FILE_MAX_BYTES:
+            backup = Path(f"{path}.1")
+            backup.unlink(missing_ok=True)
+            path.replace(backup)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        path.chmod(0o600)
+    except OSError as exc:
+        logging.getLogger(__name__).warning(
+            "debug transcript write failed: %s", type(exc).__name__
+        )
 
 
 class EventBus:
@@ -921,6 +1021,7 @@ def _make_engine(
             project_path = str(getattr(getattr(cfg, "project", None), "path", "") or "")
 
         def _on_event(event: dict[str, Any]) -> None:
+            _log_debug_event(event)
             bus.publish_sync(event)
 
         player_state = None
@@ -979,19 +1080,21 @@ def _make_pool(cfg: Any, bus: EventBus) -> Any:
         stale_after_s = float(getattr(orch_cfg, "stale_after_s", 120.0) or 120.0)
 
         async def _on_card(card: Any) -> None:
-            await bus.publish({"type": "card", "card": _card_to_dict(card)})
+            event = {"type": "card", "card": _card_to_dict(card)}
+            _log_debug_event(event)
+            await bus.publish(event)
 
         async def _on_drop(job: Any, reason: str) -> None:
             # A dropped synthesis job must be visible, not silent (a card that
             # never arrives is indistinguishable from a hung session to the DM).
-            await bus.publish(
-                {
-                    "type": "job_dropped",
-                    "kind": str(getattr(job, "kind", "")),
-                    "reason": str(reason),
-                    "t": time.time(),
-                }
-            )
+            event = {
+                "type": "job_dropped",
+                "kind": str(getattr(job, "kind", "")),
+                "reason": str(reason),
+                "t": time.time(),
+            }
+            _log_debug_event(event)
+            await bus.publish(event)
 
         return JobPool(
             max_concurrent=max_concurrent,
@@ -1006,6 +1109,7 @@ def _make_pool(cfg: Any, bus: EventBus) -> Any:
 
 def main(config_path: str) -> None:
     """Entry point: build app with real or degraded dependencies, then serve."""
+    _configure_debug_logging()
     cfg: Any = None
     config_error: str | None = None
     store: Any = None

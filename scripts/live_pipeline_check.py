@@ -1,16 +1,12 @@
 """Live pipeline test: real localhost:8081 models (qwen3.8-4b) + e2e fixture campaign.
 
-Drives the FULL live path against the real local models:
-  1. fast-lane classifier (detect_trigger) on sample utterances;
-  2. a loot trigger through WorkerAgent -> expects a campaign-grounded CARD;
-  3. a lore trigger -> expects a grounded scene-context (ephemeral tier).
+Drives the full OpenJEV -> JevWorker path against the real local services.
 Confirms the implementation works end-to-end with the real models (not the mock).
 """
 from __future__ import annotations
 
 import asyncio
 import sys
-import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -24,7 +20,6 @@ from dmd.lexicon import build_lexicon
 from dmd.orchestrator import JobPool
 from dmd.pipeline import SessionEngine
 from dmd.scanner import chunk_docs, scan_folder
-from dmd.triggers import detect_trigger
 from dmd.types import Utterance
 
 CAMPAIGN = str(ROOT / "tests" / "e2e" / "campaign")
@@ -35,22 +30,7 @@ async def main() -> None:
     cfg.project.path = CAMPAIGN
     gw = Gateway(cfg)
 
-    print("== 1. fast-lane classifier (real qwen3.8-4b) ==")
-    samples = [
-        ("kael", "I search the goblin corpse for loot"),
-        ("kael", "rough luck, nothing on him"),
-        ("bryn", "what's the history of this crypt?"),
-    ]
-    for _uid, text in samples:
-        t0 = time.time()
-        try:
-            is_trig = await detect_trigger(gw, text)
-            print(f"  trigger={is_trig!s:5} ({time.time()-t0:5.1f}s)  {text!r}")
-        except Exception as e:
-            print(f"  classifier ERROR: {type(e).__name__}: {e}")
-            break
-
-    print("\n== 2. full agentic loop (real models + Vellmarsh campaign) ==")
+    print("== OpenJEV + JevWorker (real services + Vellmarsh campaign) ==")
     store = IndexStore("/tmp/live_index.db")
     docs = scan_folder(CAMPAIGN)
     store.upsert_docs(docs)

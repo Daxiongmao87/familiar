@@ -49,9 +49,8 @@ Discord, and replay sources all implement `AudioSource`). STT is
 streaming-only: PCM goes to `StreamingSttAdapter` (TCP stream_host /
 stream_port, SimulStreaming protocol: raw s16le PCM in, newline-JSON
 partials/finals out). There is no batch path — batch HTTP transcription
-was removed for its multi-second delay. Triggers route to `WorkerAgent`,
-or — when `openjev.enabled` — to `OpenjevGate.decide` (+ `JevWorker`
-when `directed_worker`).
+was removed for its multi-second delay. Every in-character final routes to
+`OpenjevGate.decide`; deploys route through the deterministic `JevWorker`.
 
 Desktop mode (new): Electron starts first, seeds
 `<userData>/familiar-config.yaml` from the packaged example once, verifies
@@ -59,6 +58,19 @@ installer state, supervises the backend binary with `DMD_HOST/PORT` +
 `cwd=userData`, supervises sidecars, hosts the synthesis bridge, then
 loads the backend URL in the main window. The backend perceives local
 inference as plain localhost URLs — no WebGPU detail crosses into Python.
+
+### Diagnostic mode
+
+Launch the AppImage with `--familiar-debug` to persist a support log at
+`~/.config/familiar-desktop/logs/familiar-debug.log` and finalized utterances
+as JSON Lines at `~/.config/familiar-desktop/logs/familiar-transcript.jsonl`.
+The debug log includes desktop startup, supervised-service output, STT health,
+trigger decisions, job drops, and card outcomes. The transcript contains the
+timestamp, speaker identity/name, and corrected final text; partial hypotheses
+and raw audio are never saved. Both files use mode `0600`, rotate to one bounded
+5 MiB backup, and are opt-in because transcript text is private. The debug log
+also redacts common credential forms and omits card bodies. Launch without
+`--familiar-debug` for normal non-persistent operation.
 
 ## 3. OpenJEV scoring (inspected in ../openjev @ b4782a6c953f)
 

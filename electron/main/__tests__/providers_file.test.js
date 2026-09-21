@@ -17,6 +17,9 @@ models:
     provider: remote
     base_url: http://remote:8080/v1
     model_id: minicpm5-2b
+  fast:
+    base_url: http://localhost:8081/v1
+    model_id: stale-fast-model
   stt:
     stream_host: 127.0.0.1
     stream_port: 43007
@@ -130,6 +133,11 @@ test('writeSetupConfig writes endpoints, discord, and STT mode', () => {
   assert.ok(text.includes('base_url: http://llm:8080/v1\n') || text.includes('base_url: http://llm:8080/v1 '),
     'trailing slash stripped');
   assert.ok(text.includes('model_id: mx'));
+  const models = text.split(/^models:\s*$/m)[1].split(/^\S/m)[0];
+  const fast = models.split(/^  (?=\S)/m).find((block) => block.startsWith('fast:'));
+  assert.match(fast, /base_url: http:\/\/llm:8080\/v1/);
+  assert.match(fast, /model_id: mx/);
+  assert.match(fast, /api_key: sk-1/);
   assert.ok(text.includes('stream_host: 192.168.0.9'));
   assert.ok(text.includes('stream_port: 43111'));
   const back = scanSetup(file);

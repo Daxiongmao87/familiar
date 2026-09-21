@@ -22,7 +22,7 @@ Reported stages per utterance (see the brief's chain):
                     split from the server's own `timings` field) — component
                     measurement, diarize on and off
   utterance_committed   `transcript` event arrival (voice->transcript A)
-  agent_context_ready   `turn_latency` event (fast-lane trigger classified,
+  agent_context_ready   `turn_latency` event (OpenJEV verdict complete,
                     job queued; carries detect_ms / lane_ms)
   first_token       n/a — the gateway is non-streaming (one POST per model
                     call), so no first-token exists on the wire; stated, not
@@ -83,7 +83,7 @@ ANSWER_TIMEOUT_S = 40.0
 TRANSCRIBE_TIMEOUT_S = 30.0
 
 # Three utterance lengths (~3 s / ~8 s / ~15 s of speech) built from the
-# sample campaign's real entities so the fast-lane classifier and the agent
+# sample campaign's real entities so OpenJEV and the worker
 # have true triggers (loot) and true retrieval targets.
 UTTERANCES: list[dict[str, str]] = [
     {

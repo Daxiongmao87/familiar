@@ -23,6 +23,7 @@ from dmd.index_store import IndexStore
 from dmd.init_pass import run_init
 from dmd.lexicon import build_lexicon
 from dmd.orchestrator import JobPool
+from dmd.openjev import OpenjevDecision, RouteVerdict
 from dmd.pipeline import SessionEngine
 from dmd.types import Card, Entity
 
@@ -123,22 +124,36 @@ class FakeGateway:
                 ]
             }
         if "grappl" in user_text.lower():
-            # Pre-grounding contract (2026-09-05): for rules tasks the engine
-            # already fired web_search and injected RULE SOURCE SEARCH RESULTS
-            # before this decode, so the model answers the grounded card
-            # directly rather than issuing another in-loop tool call.
-            if "RULE SOURCE SEARCH RESULTS" in user_text:
-                return _rules_card_json()
-            if "TOOL RESULT" in user_text:
-                # In-loop search completed (hermetic fallback when the
-                # pre-grounding block was unavailable).
-                return _rules_card_json()
-            # Request the search.
-            return '{"tool": "web_search", "args": {"query": "5e grapple rules"}}'
+            return _rules_card_json()
         return _loot_card_json()
 
     async def aclose(self) -> None:
         pass
+
+
+class FakeOpenjevGate:
+    """Hermetic semantic gate/ranker for the replay composition test."""
+
+    async def decide(self, lines: list[str]) -> OpenjevDecision:
+        current = lines[-1].lower() if lines else ""
+        deploy = "search" in current or "grappl" in current
+        return OpenjevDecision(deploy, 0.9 if deploy else 0.1, tier="card")
+
+    async def rank(
+        self,
+        row_id: str,
+        state: str,
+        question: str,
+        options: list[dict[str, str]],
+    ) -> dict[str, float]:
+        probability = 1.0 / max(len(options), 1)
+        return {option["id"]: probability for option in options}
+
+    async def relevance(self, state: str) -> RouteVerdict:
+        return RouteVerdict("both", {"offline": 0.1, "online": 0.1, "both": 0.8})
+
+    async def aclose(self) -> None:
+        return None
 
 
 @pytest.fixture()
@@ -191,6 +206,9 @@ async def rig(tmp_path: Path):
         pool=pool,
         on_event=events.append,
     )
+    gate = FakeOpenjevGate()
+    engine._openjev_gate = gate  # type: ignore[assignment]
+    engine._jev_worker.gate = gate  # type: ignore[assignment]
     yield engine, pool, events, gw
     await pool.close()
 
@@ -202,19 +220,33 @@ def _normalize(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         ev = json.loads(json.dumps(ev))
         if ev.get("type") == "turn_latency":
             # observability event: wall-clock stamp and the per-stage durations
-            # are noise (regex fast-lane detection is sub-millisecond but its
-            # monotonic delta straddles the 0.0/0.1 rounding boundary). The
+            # are noise (gate timing depends on the scoring service). The
             # behavior the golden pins is the event's shape and routing, not
             # its timing.
             ev["t"] = 0.0
             ev["detect_ms"] = 0.0
             ev["lane_ms"] = 0.0
+        if ev.get("type") in {"transcript_partial", "trigger_verdict"}:
+            ev["t"] = 0.0
         if ev.get("type") == "stt_latency":
             # Same: the golden pins that a streaming measurement exists per
             # final (path/user), not its wall-clock timing.
             ev["t"] = 0.0
             ev["stt_ms"] = 0.0
             ev["post_speech_ms"] = 0.0
+        if ev.get("type") == "transcript":
+            # Transcript rows carry a random block UUID (and repeat it in
+            # the attribution snapshot): the golden pins event shape and
+            # attribution content, never the random IDs.
+            ev.pop("id", None)
+            attribution = ev.get("attribution")
+            if isinstance(attribution, dict):
+                attribution.pop("block_id", None)
+        if ev.get("type") == "transcript_revision":
+            ev.pop("id", None)
+            attribution = ev.get("attribution")
+            if isinstance(attribution, dict):
+                attribution.pop("block_id", None)
         if ev.get("type") == "card":
             card = ev["card"]
             card["id"] = f"card-{card_n}"

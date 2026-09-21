@@ -13,8 +13,14 @@ from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from .agent import AgentResult, WorkerAgent
-from .attribution import AttributedSegment, attribute_segments, attribute_whole, group_by_speaker
+from .agent import AgentResult
+from .attribution import (
+    AttributedSegment,
+    attribute_segments,
+    attribute_whole_evidence,
+    group_by_speaker,
+)
+from .attribution_review import RollingAttributionReviewer
 from .config import AppConfig
 from .embedder import Embedder
 from .index_store import IndexStore
@@ -25,7 +31,6 @@ from .openjev import Debouncer, OpenjevGate
 from .sources.base import AudioSource
 from .staging import StagedContext, prefetch_entity, render_staged_block
 from .streaming_stt import StreamingSttAdapter
-from .triggers import detect_trigger
 from .types import Card, Job, LexiconEntry, Priority, Utterance
 
 logger = logging.getLogger(__name__)
@@ -92,14 +97,12 @@ def _make_job(
 class SessionEngine:
     """Owns per-session state: rolling transcript, VAD buffers, lexicon cache,
 
-    embedding, the agentic worker, and the synthesis job pool.
+    embedding, the deterministic JEV worker, and the synthesis job pool.
 
-    v2: triggers and manual queries route to a WorkerAgent (an agentic tool
-    loop) instead of a fixed embed->retrieve->synthesize pipeline. The fast
-    lane verdict is binary — no taxonomy; the openjev gate picks the tier
-    (card/ephemeral) per trigger, the legacy path defaults triggers to
-    cards. A background TranscriptMonitor proactively surfaces alerts and
-    auto-marks cards done.
+    OpenJEV is the sole automatic deploy/wait authority and picks the output
+    tier (card/ephemeral). JevWorker then runs the fixed rank, retrieve,
+    relevance, and synthesis path. A background TranscriptMonitor proactively
+    surfaces alerts and auto-marks cards done.
     """
 
     def __init__(
@@ -129,6 +132,7 @@ class SessionEngine:
         self.player_state = player_state
         self.speaking_tracker = speaking_tracker
         self._recent: deque[Utterance] = deque(maxlen=30)
+        self._attribution_records: deque[Utterance] = deque(maxlen=256)
         self._hotword_prompt: str = _lexicon_prompt(entries)
         self._active_cards: dict[
             str, Card
@@ -139,15 +143,6 @@ class SessionEngine:
         self._scene_buffer: deque[dict] = deque(
             maxlen=12
         )  # recent scene notes (for the monitor)
-        self._agent = WorkerAgent(
-            gw,
-            store,
-            project_path,
-            cfg.agent,
-            world_map=world_map,
-            embedder=embedder,
-            tool_registry=tool_registry,
-        )
         self._monitor: TranscriptMonitor | None = None
         # Streaming STT is the only transcription path: audio is pushed
         # straight to the SimulStreaming server and the server's own VAD
@@ -164,7 +159,7 @@ class SessionEngine:
         self._pending_submits: set[asyncio.Task] = set()
         # Session controls (SPEC §15): pause-capture drops incoming audio;
         # OOC keeps transcribing (the event log is the sole truth) but stops
-        # fast-lane triggers and proactive monitoring.
+        # automatic gate decisions and proactive monitoring.
         self._capture_paused = False
         self._ooc = False
 
@@ -186,42 +181,37 @@ class SessionEngine:
         )
         self._prefetch_tasks: set[asyncio.Task] = set()
         self._prefetch_inflight = 0  # throttle bound for concurrent prefetches
-        # Openjev decision gate (binary deploy/wait trigger). Off by default;
-        # when disabled the legacy regex + fast-LLM path below is untouched.
-        # The base URL follows the JEV provider mode (remote base_url or the
-        # local sidecar); synthesis needs no equivalent because Gateway
-        # resolves it live through the provider router.
-        oj_cfg = getattr(cfg, "openjev", None)
-        self._openjev_gate: OpenjevGate | None = (
-            OpenjevGate(
-                base_url=_jev_base_url(cfg, oj_cfg),
-                threshold=oj_cfg.threshold,
-                timeout_s=oj_cfg.timeout_s,
-                recent_n=oj_cfg.recent_n,
-            )
-            if oj_cfg is not None and getattr(oj_cfg, "enabled", False)
-            else None
+        # OpenJEV is the sole automatic deploy/wait authority. Its base URL
+        # follows the configured provider (remote scorer or local sidecar).
+        oj_cfg = cfg.openjev
+        self._openjev_gate = OpenjevGate(
+            base_url=_jev_base_url(cfg, oj_cfg),
+            threshold=oj_cfg.threshold,
+            timeout_s=oj_cfg.timeout_s,
+            recent_n=oj_cfg.recent_n,
         )
-        self._openjev_debouncer: Debouncer | None = (
-            Debouncer(window_s=getattr(oj_cfg, "debounce_s", 30.0))
-            if self._openjev_gate is not None
-            else None
+        self._openjev_debouncer = Debouncer(window_s=oj_cfg.debounce_s)
+        self._jev_worker = JevWorker(
+            gw,
+            store,
+            project_path,
+            cfg.agent,
+            world_map=world_map,
+            embedder=embedder,
+            tool_registry=tool_registry,
+            gate=self._openjev_gate,
+            entries=entries,
         )
-        self._jev_worker: JevWorker | None = (
-            JevWorker(
-                gw,
-                store,
-                project_path,
-                cfg.agent,
-                world_map=world_map,
-                embedder=embedder,
-                tool_registry=tool_registry,
-                gate=self._openjev_gate,
-                entries=entries,
-            )
-            if self._openjev_gate is not None
-            and getattr(oj_cfg, "directed_worker", False)
-            else None
+        # Rolling attribution review: every finalized block advances the
+        # review context and schedules eligible prior blocks for bounded
+        # background JEV re-scoring. Scoring never runs inline here, so it
+        # cannot block the transcript-to-card path or its latency budget.
+        self._reviewer = RollingAttributionReviewer(
+            cfg.attribution_review,
+            self._openjev_gate,
+            speaking_tracker,
+            on_revision=self._on_attribution_revision,
+            context_lines=self._review_context_lines,
         )
 
     def _staged_block(self, entities: list[str]) -> tuple[str, list[str]]:
@@ -287,18 +277,13 @@ class SessionEngine:
         from .providers import jev_base_url_for, synthesis_endpoint_for
 
         eff = synthesis_endpoint_for(self.cfg).base_url
-        if self._openjev_gate is not None:
-            try:
-                self._openjev_gate.set_base_url(jev_base_url_for(self.cfg))
-            except ValueError:
-                logger.warning("JEV provider switch failed; gate URL unchanged")
+        try:
+            self._openjev_gate.set_base_url(jev_base_url_for(self.cfg))
+        except ValueError:
+            logger.warning("JEV provider switch failed; gate URL unchanged")
         return {
             "synthesis": eff,
-            "jev": (
-                self._openjev_gate._base_url
-                if self._openjev_gate is not None
-                else ""
-            ),
+            "jev": self._openjev_gate._base_url,
         }
 
     def refresh_lexicon(self, entries: list[LexiconEntry]) -> dict[str, Any]:
@@ -340,7 +325,7 @@ class SessionEngine:
         """Server-VAD-endpointed committed segment: full utterance path.
 
         §7a JIT attribution against mic-state, lexicon correction,
-        transcript event, fast-lane dispatch.
+        transcript event, OpenJEV dispatch.
         """
         if not text.strip():
             return
@@ -349,7 +334,7 @@ class SessionEngine:
         # Clear the provisional row using its capture identity before
         # publishing finals, whose attributed speaker IDs may differ.
         await self._on_stream_partial(user_id, "")
-        await self._publish_and_dispatch(groups)
+        await self._publish_and_dispatch(groups, source_user_id=user_id)
         post_speech_ms = (time.monotonic() - t_end) * 1000.0
         logger.info(
             "stt-latency(streaming) user=%s post_speech_ms=%.1f",
@@ -369,32 +354,52 @@ class SessionEngine:
         )
 
     async def _publish_and_dispatch(
-        self, groups: list[AttributedSegment]
+        self, groups: list[AttributedSegment], source_user_id: str
     ) -> list[Utterance]:
-        """Streaming-final tail: lexicon-correct, publish, feed the fast lane."""
+        """Streaming-final tail: lexicon-correct, publish, feed OpenJEV.
+
+        Publishing registers the block with the rolling reviewer (which
+        advances the review context and schedules eligible priors for
+        background re-scoring) and dispatches it to OpenJEV exactly once.
+        Later attribution revisions never come back through here.
+        """
         utterances: list[Utterance] = []
         for g in groups:
             corrected, _spans = correct_text(g.text, self.entries)
             if not corrected.strip():
                 continue
+            block_id = uuid.uuid4().hex
+            initial = self._reviewer.publish(
+                block_id=block_id,
+                text=corrected,
+                t_start=g.t_start,
+                t_end=g.t_end,
+                source_user_id=source_user_id,
+                evidence=g,
+            )
             event: dict[str, Any] = {
                 "type": "transcript",
-                "user_id": g.user_id,
+                "id": block_id,
+                "user_id": initial["user_id"],
                 "text": corrected,
                 "t": g.t_end,
             }
-            if g.name:
-                event["name"] = g.name
+            if initial["name"]:
+                event["name"] = initial["name"]
+            event["attribution"] = initial["attribution"]
             self.on_event(event)
             utter = Utterance(
-                user_id=g.user_id,
+                user_id=initial["user_id"],
                 text=corrected,
                 t_start=g.t_start,
                 t_end=g.t_end,
                 raw_text=g.text,
-                name=g.name,
+                name=initial["name"],
+                transcript_id=block_id,
+                attribution=initial["attribution"],
             )
             utterances.append(utter)
+            self._attribution_records.append(utter)
             await self.handle_utterance(utter)
         return utterances
 
@@ -425,12 +430,58 @@ class SessionEngine:
             )
             if groups:
                 return groups
-        uid, name = attribute_whole(tracker, t_start, t_end, user_id)
+        evidence = attribute_whole_evidence(tracker, t_start, t_end, user_id)
         return [
             AttributedSegment(
-                user_id=uid, text=raw, t_start=t_start, t_end=t_end, name=name
+                user_id=evidence.user_id, text=raw, t_start=t_start, t_end=t_end,
+                name=evidence.name, candidates=evidence.candidates,
+                coverage=evidence.coverage, margin=evidence.margin, state=evidence.state,
             )
         ]
+
+    def _review_context_lines(self) -> list[dict[str, Any]]:
+        """Chronological transcript rows for review-prompt context windows."""
+        return [
+            {
+                "id": u.transcript_id,
+                "user_id": u.user_id,
+                "name": u.name,
+                "text": u.text,
+            }
+            for u in self._attribution_records
+            if u.transcript_id
+        ]
+
+    def _on_attribution_revision(self, outcome: dict[str, Any]) -> None:
+        """Apply a rolling-reviewer outcome to the stored row, by stable ID.
+
+        Revisions are UI/audit-only: they update the existing transcript row
+        in place and never re-enter OpenJEV dispatch or synthesis, so a late
+        correction cannot duplicate a card or a transcript line. Pruned rows
+        (stable ID no longer stored) make the outcome stale: dropped.
+        """
+        target: Utterance | None = None
+        for utterance in self._attribution_records:
+            if utterance.transcript_id == outcome.get("block_id"):
+                target = utterance
+                break
+        if target is None:
+            return
+        target.user_id = str(outcome.get("user_id", target.user_id))
+        target.name = outcome.get("name")
+        target.attribution = dict(outcome.get("attribution") or {})
+        self.on_event({
+            "type": "transcript_revision", "id": target.transcript_id,
+            "user_id": target.user_id, "name": target.name,
+            "attribution": target.attribution, "t": time.monotonic(),
+        })
+
+    async def drain_attribution_reviews(self, timeout_s: float = 5.0) -> bool:
+        """Wait until scheduled attribution reviews settle; False on timeout.
+
+        Test/debug hook: the live path never blocks on reviews.
+        """
+        return await self._reviewer.drain(timeout_s)
 
     async def _submit_fire(self, job: Job, work: Callable[[], Awaitable[Any]]) -> None:
         """Schedule a pool job without blocking the caller on its completion.
@@ -455,6 +506,13 @@ class SessionEngine:
         await entered.wait()
 
     async def handle_utterance(self, u: Utterance) -> None:
+        logger.info(
+            "utterance received user=%s name=%r ooc=%s text=%r",
+            u.user_id,
+            u.name,
+            self._ooc,
+            u.text[:300],
+        )
         mentioned_pairs = link_entities(u.text, self.entries)
         seen: set[str] = set()
         mentioned: list[str] = []
@@ -467,50 +525,45 @@ class SessionEngine:
 
         if self._ooc:
             # Out-of-character: the line stays in the rolling transcript (the
-            # event log is the sole truth) but must not fire the fast lane.
+            # event log is the sole truth) but must not fire OpenJEV.
+            logger.info("utterance ignored reason=ooc user=%s", u.user_id)
             return
 
         t_lane0 = time.monotonic()
-        oj_info: dict[str, Any] | None = None
-        tier = "card"
-        if self._openjev_gate is not None:
-            window = [f"{w.name or w.user_id}: {w.text}" for w in self._recent]
-            dec = await self._openjev_gate.decide(window)
-            is_trigger = dec.deploy
-            tier = dec.tier
-            detect_ms = dec.latency_s * 1000.0
-            oj_info = {
+        window = [f"{w.name or w.user_id}: {w.text}" for w in self._recent]
+        dec = await self._openjev_gate.decide(window)
+        is_trigger = dec.deploy
+        tier = dec.tier
+        detect_ms = dec.latency_s * 1000.0
+        oj_info = {
+            "p_deploy": round(dec.prob, 4),
+            "tier": tier,
+            "p_tier": round(dec.tier_prob, 4),
+            "error": dec.error,
+        }
+        debounced = bool(
+            is_trigger and self._openjev_debouncer.check(time.monotonic())
+        )
+        # Every gate verdict is published — waits and errors included — so
+        # recall and availability can be tuned from evidence.
+        self.on_event(
+            {
+                "type": "trigger_verdict",
+                "user_id": u.user_id,
+                "text": u.text[:120],
+                "deploy": bool(is_trigger and not debounced),
                 "p_deploy": round(dec.prob, 4),
-                "tier": tier,
-                "p_tier": round(dec.tier_prob, 4),
+                "debounced": debounced,
                 "error": dec.error,
+                "t": time.time(),
             }
-            debounced = bool(
-                is_trigger
-                and self._openjev_debouncer is not None
-                and self._openjev_debouncer.check(time.monotonic())
-            )
-            # Every gate verdict is published — waits included — so recall
-            # can be tuned on evidence instead of blind. Gate-only event;
-            # the legacy path emits nothing here.
-            self.on_event(
-                {
-                    "type": "trigger_verdict",
-                    "user_id": u.user_id,
-                    "text": u.text[:120],
-                    "deploy": bool(is_trigger and not debounced),
-                    "p_deploy": round(dec.prob, 4),
-                    "debounced": debounced,
-                    "error": dec.error,
-                    "t": time.time(),
-                }
-            )
-            if debounced:
-                return
-        else:
-            is_trigger = await detect_trigger(self.gw, u.text)
-            detect_ms = (time.monotonic() - t_lane0) * 1000.0
+        )
+        if debounced:
+            return
         if not is_trigger:
+            logger.info(
+                "utterance decision=wait user=%s detect_ms=%.1f", u.user_id, detect_ms
+            )
             return
 
         ctx = {
@@ -525,11 +578,16 @@ class SessionEngine:
             return await self._generate_card(ctx)
 
         await self._submit_fire(job, _work)
-        # Fast-lane timing, published so the session log and tools/latency_probe
-        # can attribute the transcript -> answer gap: detect_trigger (fast LLM
-        # or openjev gate) vs everything after it (context assembly + agent
-        # work). The openjev key exists only when the gate is enabled, so the
-        # legacy event shape is byte-identical when it is off.
+        logger.info(
+            "utterance decision=queued user=%s job=%s tier=%s detect_ms=%.1f",
+            u.user_id,
+            job.id,
+            tier,
+            detect_ms,
+        )
+        # Gate timing, published so the session log and tools/latency_probe can
+        # attribute the transcript -> answer gap between OpenJEV and everything
+        # after it (context assembly + worker execution).
         ev: dict[str, Any] = {
             "type": "turn_latency",
             "user_id": u.user_id,
@@ -539,8 +597,7 @@ class SessionEngine:
             "lane_ms": round((time.monotonic() - t_lane0) * 1000.0, 1),
             "t": time.time(),
         }
-        if oj_info is not None:
-            ev["openjev"] = oj_info
+        ev["openjev"] = oj_info
         self.on_event(ev)
 
     async def manual_query(self, text: str) -> None:
@@ -559,6 +616,10 @@ class SessionEngine:
         await self._submit_fire(job, _work)
 
     def _transcript_text(self) -> str:
+        # Inferred labels stay unmarked here on purpose: this text feeds the
+        # locked v39 deploy/wait gate, and any marker would change gate
+        # inputs. Rolling-review prompts (dmd/attribution_review.py) mark
+        # every inferred label provisional instead.
         return "\n".join(
             f"{u.name or u.user_id}: {u.text}" for u in self._recent
         )
@@ -607,9 +668,8 @@ class SessionEngine:
                 staged_matched[:8],
                 len(staged_block),
             )
-        worker = self._jev_worker if self._jev_worker is not None else self._agent
         try:
-            result = await worker.run(
+            result = await self._jev_worker.run(
                 task,
                 tier,
                 trigger_portion=trigger_portion,
@@ -617,6 +677,11 @@ class SessionEngine:
                 staged_block=staged_block,
             )
         except Exception as exc:
+            logger.warning(
+                "card generation failed tier=%s error=%s",
+                tier,
+                f"{type(exc).__name__}: {exc}",
+            )
             result = AgentResult(tier=tier, error=f"{type(exc).__name__}: {exc}")
 
         if tier == "card":
@@ -649,6 +714,14 @@ class SessionEngine:
                 meta=_meta,
             )
             self._active_cards[card.id] = card
+            logger.info(
+                "card generated id=%s kind=%s title=%r error=%r tools=%d",
+                card.id,
+                card.kind,
+                card.title,
+                result.error,
+                result.tool_calls,
+            )
             return card
         # ephemeral tier -> scene context (no card event)
         text = result.text or ""
@@ -901,9 +974,9 @@ class SessionEngine:
             except (asyncio.CancelledError, Exception):
                 pass
         self._prefetch_tasks.clear()
+        await self._reviewer.aclose()
         await self._stt_adapter.close_all()
-        if self._openjev_gate is not None:
-            await self._openjev_gate.aclose()
+        await self._openjev_gate.aclose()
         for task in list(self._pending_submits):
             task.cancel()
         self._pending_submits.clear()

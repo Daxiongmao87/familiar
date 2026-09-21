@@ -240,20 +240,30 @@ function writeSetupConfig(configPath, setup) {
   if (s.synthesisRemote !== undefined && s.synthesisRemote !== null) {
     const r = s.synthesisRemote;
     if (typeof r !== 'object') throw new Error('synthesisRemote must be an object');
+    // Setup exposes one generation endpoint. Keep the optional fast role used
+    // by background monitoring on that endpoint too.
+    const hasFast = roleBlock(sectionOf(text, 'models'), 'fast') !== '';
+    const generationRoles = hasFast ? ['synthesis', 'fast'] : ['synthesis'];
     if (r.base_url !== undefined && r.base_url !== '') {
       assertUrl(r.base_url, 'synthesis base URL');
-      text = setKey(text, { section: 'models', role: 'synthesis', indent: '    ',
-        key: 'base_url', value: r.base_url.replace(/\/+$/, '') });
+      for (const role of generationRoles) {
+        text = setKey(text, { section: 'models', role, indent: '    ',
+          key: 'base_url', value: r.base_url.replace(/\/+$/, '') });
+      }
     }
     if (r.model_id !== undefined && r.model_id !== '') {
       assertNonEmpty(r.model_id, 'synthesis model ID');
-      text = setKey(text, { section: 'models', role: 'synthesis', indent: '    ',
-        key: 'model_id', value: r.model_id.trim() });
+      for (const role of generationRoles) {
+        text = setKey(text, { section: 'models', role, indent: '    ',
+          key: 'model_id', value: r.model_id.trim() });
+      }
     }
     if (r.api_key !== undefined && r.api_key !== null && r.api_key !== '') {
       assertNonEmpty(r.api_key, 'synthesis API key');
-      text = setKey(text, { section: 'models', role: 'synthesis', indent: '    ',
-        key: 'api_key', value: r.api_key });
+      for (const role of generationRoles) {
+        text = setKey(text, { section: 'models', role, indent: '    ',
+          key: 'api_key', value: r.api_key });
+      }
     }
   }
   if (s.jevRemote !== undefined && s.jevRemote !== null) {

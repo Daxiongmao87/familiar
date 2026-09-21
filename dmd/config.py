@@ -11,7 +11,13 @@ import re
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import (
+    BaseModel,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 _ENV_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
@@ -185,9 +191,8 @@ class StagingConfig(BaseModel):
 
 
 class OpenjevConfig(BaseModel):
-    """Openjev decision gate (binary deploy/wait trigger, no taxonomy)."""
+    """Required OpenJEV decision gate (binary deploy/wait, no taxonomy)."""
 
-    enabled: bool = False  # off = legacy regex + fast-LLM trigger path
     # Inference provider: "remote" (base_url as configured) or "local"
     # (the bundled JEV sidecar at desktop.jev_local_url, identical /score).
     provider: str = "remote"
@@ -196,7 +201,42 @@ class OpenjevConfig(BaseModel):
     timeout_s: float = 3.0  # per scoring call; failures fail closed to wait
     recent_n: int = 8  # transcript lines in the gate state window
     debounce_s: float = 30.0  # redeploy suppression window in seconds (0 off)
-    directed_worker: bool = False  # JEV-routed deterministic worker (no agent loop)
+
+
+class AttributionReviewConfig(BaseModel):
+    """Rolling speaker-attribution review: new blocks reassess prior ones.
+
+    Every finalized block advances the review context version and
+    schedules eligible prior blocks — confident timing included — for
+    bounded JEV re-scoring. ``min_prob`` labels winners below it as
+    low-confidence (provisional); it no longer drops them, so every
+    valid distribution is retained. ``max_pending`` bounds concurrent
+    scorer calls; waiting work queues instead of being dropped.
+    """
+
+    enabled: bool = True
+    min_prob: float = Field(default=0.75, ge=0.0, le=1.0)
+    max_pending: int = Field(default=1, ge=1)
+    recent_n: int | None = Field(default=None, ge=1)
+    following_n: int | None = Field(default=None, ge=0)
+    max_age_blocks: int = Field(default=12, ge=1)
+    max_age_s: float = Field(default=300.0, gt=0.0)
+    initial_reviews: int = Field(default=2, ge=0)
+    max_total_reviews: int = Field(default=6, ge=0)
+    max_candidates: int = Field(default=6, ge=0)
+    history_len: int = Field(default=8, ge=1)
+    review_timeout_s: float = Field(default=5.0, gt=0.0)
+    low_confidence_below: float = Field(default=0.6, ge=0.0, le=1.0)
+    unstable_window: int = Field(default=3, ge=1)
+
+    @model_validator(mode="after")
+    def _check_review_bounds(self) -> AttributionReviewConfig:
+        """Total pass budget must cover the initial rolling phase."""
+        if self.max_total_reviews < self.initial_reviews:
+            raise ValueError(
+                "max_total_reviews must be >= initial_reviews"
+            )
+        return self
 
 
 class SttPipelineConfig(BaseModel):
@@ -223,6 +263,17 @@ class DiscordConfig(BaseModel):
     dm_user_id: str | None = None  # authority to follow — Familiar joins their VC
     self_mute: bool = True
     self_deaf: bool = False
+
+    @field_validator("guild_id", "channel_id", "dm_user_id", mode="before")
+    @classmethod
+    def _snowflake_to_str(cls, value: Any) -> str | None:
+        """Normalize a YAML-unquoted Discord snowflake ID to its string form."""
+        if value is None or isinstance(value, str):
+            return value
+        # bool is an int subclass; reject it before the int branch.
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("Discord snowflake ID must be a string or integer")
+        return str(value)
 
 
 class ProjectConfig(BaseModel):
@@ -272,6 +323,7 @@ class AppConfig(BaseModel):
     stt_pipeline: SttPipelineConfig = SttPipelineConfig()
     staging: StagingConfig = StagingConfig()
     openjev: OpenjevConfig = OpenjevConfig()
+    attribution_review: AttributionReviewConfig = AttributionReviewConfig()
     discord: DiscordConfig = DiscordConfig()
     server: ServerConfig = ServerConfig()
     desktop: DesktopConfig = DesktopConfig()

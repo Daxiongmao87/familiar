@@ -127,6 +127,10 @@ def stack(tmp_path_factory: pytest.TempPathFactory) -> Any:
                 "stt": {},
                 "embeddings": {"provider": "local", "model_id": "hash8"},
             },
+            "openjev": {
+                "base_url": f"http://127.0.0.1:{mock_port}",
+                "debounce_s": 0.0,
+            },
             "orchestration": {"max_concurrent": 2, "job_timeout_s": 10.0},
         }
     )

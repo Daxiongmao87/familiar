@@ -21,6 +21,7 @@ const { installCaptureHandler } = require('./capture');
 
 const { ensureUserConfig, resolveBackend } = require('./backend');
 const { startBridge } = require('./bridge');
+const { createDebugLogger, debugRequested } = require('./debug_log');
 const { detectCuda, verdict } = require('./hardware');
 const { registerIpc } = require('./ipc');
 const { basePython, ensureVenv, jevArgv, sttArgv, waitForHttp, waitForTcp } = require('./sidecars');
@@ -36,6 +37,7 @@ const ctx = {
   manifest: null, layoutMod: null, dirs: null, state: null,
   backend: null, hardware: null, cuda: null, hwVerdict: null, forcedRemote: [],
   installLog: [],
+  debug: { enabled: false, logFile: '', log: () => {} },
   providers: { synthesis: 'remote', jev: 'remote', stt: 'local' },
 };
 
@@ -63,6 +65,13 @@ function createWindow(name, opts) {
     },
   }, opts || {}));
   win.on('closed', () => { delete ctx.windows[name]; });
+  win.on('unresponsive', () => ctx.debug.log('renderer', 'unresponsive', { name }));
+  win.webContents.on('render-process-gone', (_ev, detail) => {
+    ctx.debug.log('renderer', 'process_gone', { name, detail });
+  });
+  win.webContents.on('did-fail-load', (_ev, code, description, url) => {
+    ctx.debug.log('renderer', 'load_failed', { name, code, description, url });
+  });
   // The hidden inference window intentionally remains alive behind the UI.
   // Closing the visible main window must still begin the full shutdown path.
   if (name === 'main' || name === 'setup') win.on('closed', () => { app.quit(); });
@@ -85,6 +94,7 @@ function send(channel, payload) {
 }
 
 function logSupervisor(ev) {
+  ctx.debug.log(`service:${ev.name}`, ev.type, ev);
   ctx.installLog.push(`[${ev.name}] ${ev.type}${ev.text ? `: ${ev.text.slice(0, 200)}` : ''}`);
   if (ctx.installLog.length > 300) ctx.installLog.shift();
   if (['exited', 'restart_giveup', 'spawn_error', 'restarting'].includes(ev.type)) {
@@ -96,6 +106,7 @@ function logSupervisor(ev) {
 async function bootServices(onProgress) {
   const { backend } = ctx;
   const progress = onProgress || (() => {});
+  ctx.debug.log('electron', 'boot_services', { providers: ctx.providers });
   // Backend first: the UI and health checks hang off it.
   const be = supervise({
     name: 'backend', command: backend.command, args: backend.args,
@@ -366,6 +377,10 @@ async function ready() {
     return;
   }
   const userData = app.getPath('userData');
+  ctx.debug = createDebugLogger({
+    enabled: debugRequested(process.argv, process.env), userData,
+  });
+  ctx.debug.log('electron', 'ready', { userData, resources: resources() });
   const { layout } = require('../shared/paths');
   ctx.layoutMod = layout;
   ctx.dirs = layout(userData);
@@ -377,8 +392,17 @@ async function ready() {
   saveState(ctx.dirs.stateFile, ctx.state);
 
   ctx.backend = resolveBackend({ resourcesPath: resources(), userData, repoRoot: repoRoot() });
+  if (ctx.debug.enabled) {
+    const transcriptLog = path.join(userData, 'logs', 'familiar-transcript.jsonl');
+    ctx.backend.env.DMD_DEBUG = '1';
+    ctx.backend.env.DMD_TRANSCRIPT_LOG = transcriptLog;
+    ctx.debug.log('electron', 'diagnostic_paths', {
+      debug_log: ctx.debug.logFile, transcript_log: transcriptLog,
+    });
+  }
   ensureUserConfig(exampleConfigPath(), ctx.backend.configPath);
   ctx.providers = readProvidersFromConfig(ctx.backend.configPath);
+  ctx.debug.log('electron', 'providers_loaded', ctx.providers);
 
   // Hidden inference window first: hardware probe + future WebLLM host.
   const infer = createWindow('infer',
@@ -388,6 +412,7 @@ async function ready() {
   ctx.hardware = await probeHardware();
   ctx.cuda = await detectCuda();
   ctx.hwVerdict = verdict(ctx.hardware, ctx.cuda);
+  ctx.debug.log('electron', 'hardware_verdict', ctx.hwVerdict);
   forceEndpointOnly();
 
   registerIpc(ctx, { runInstall, wantedFromProviders, bootServices, scanProviders,
@@ -454,12 +479,14 @@ function setupState(wanted) {
 
 async function bootAndShowMain(setupWin) {
   const progress = (p) => {
+    ctx.debug.log('boot', p.stage || 'progress', p);
     if (setupWin && !setupWin.isDestroyed()) setupWin.webContents.send('setup:boot', p);
   };
   if (!ctx.booted) {
     try {
       await bootServices(progress);
     } catch (err) {
+      ctx.debug.log('boot', 'failed', { error: String(err && (err.stack || err)) });
       if (setupWin && !setupWin.isDestroyed()) {
         const be = ctx.supervisor.backend;
         setupWin.webContents.send('setup:error',
@@ -484,10 +511,12 @@ function showMainWindow() {
   installCaptureHandler(session.defaultSession, desktopCapturer, () => ctx.windows.main);
   lockNavigation(main, [ctx.backend.baseUrl]);
   main.loadURL(`${ctx.backend.baseUrl}/`);
+  ctx.debug.log('electron', 'main_window_loading', { url: ctx.backend.baseUrl });
   return main;
 }
 
 async function shutdown() {
+  ctx.debug.log('electron', 'shutdown_started');
   send('app:quitting', {});
   const order = ['jev', 'stt', 'backend'];
   for (const name of order) {
@@ -509,6 +538,7 @@ if (require.main === module || process.env.FAMILIAR_ELECTRON_MAIN) {
       [features, 'PulseaudioLoopbackForScreenShare'].filter(Boolean).join(','));
   }
   app.whenReady().then(() => ready().catch((err) => {
+    ctx.debug.log('electron', 'fatal_startup', { error: String(err && (err.stack || err)) });
     // eslint-disable-next-line no-console
     console.error('fatal startup error:', err);
     app.quit();

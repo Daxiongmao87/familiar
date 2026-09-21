@@ -22,6 +22,7 @@ import time
 from typing import Any
 
 from dmd.config import load_config_dict
+from dmd.openjev import OpenjevDecision
 from dmd.pipeline import SessionEngine
 from dmd.sources.base import AudioSource
 
@@ -131,7 +132,7 @@ def _engine(port: int, tmp_path: Any, on_event: Any) -> SessionEngine:
             },
         }
     )
-    return SessionEngine(
+    engine = SessionEngine(
         cfg=cfg,
         store=None,
         gw=object(),  # STT never touches the gateway (streaming-only)
@@ -141,6 +142,18 @@ def _engine(port: int, tmp_path: Any, on_event: Any) -> SessionEngine:
         on_event=on_event,
         project_path=str(tmp_path),
     )
+    engine._openjev_gate = _WaitGate()  # type: ignore[assignment]
+    return engine
+
+
+class _WaitGate:
+    """Instant semantic wait verdict; these tests isolate STT timing."""
+
+    async def decide(self, lines: list[str]) -> OpenjevDecision:
+        return OpenjevDecision(False, 0.1)
+
+    async def aclose(self) -> None:
+        return None
 
 
 async def _drain(engine: SessionEngine, source: TimedSource) -> None:

@@ -59,10 +59,10 @@ def test_prompt_templates_ask_for_rules_without_embedding_them() -> None:
     carry any numeric rule table — the guard above enforces this; this test
     pins the audit intent at the prompt layer specifically."""
     from dmd.agent import _SYSTEM_PROMPT
+    from dmd.openjev import DEPLOY_QUESTION, TIER_QUESTION
     from dmd.pipeline import _make_job  # noqa: F401  (import = shipped surface)
-    from dmd.triggers import _CLASSIFIER_SYSTEM
 
-    for prompt in (_SYSTEM_PROMPT, _CLASSIFIER_SYSTEM):
+    for prompt in (_SYSTEM_PROMPT, DEPLOY_QUESTION, TIER_QUESTION):
         assert not re.search(r"\d+d\d+|\bDC\s*\d", prompt), (
             "a shipped prompt embeds a rule value"
         )

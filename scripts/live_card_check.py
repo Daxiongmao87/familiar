@@ -1,13 +1,11 @@
-"""Focused live card test: real 8081 models + Vellmarsh campaign, generous agent budget.
+"""Focused live card test: OpenJEV + JevWorker + Vellmarsh campaign.
 
-Confirms the full WorkerAgent loop produces a campaign-grounded CARD when given
-enough wall-clock budget (the 4b model is slow under current GPU load).
+Confirms the deterministic worker produces a campaign-grounded card.
 """
 from __future__ import annotations
 
 import asyncio
 import sys
-import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -21,7 +19,6 @@ from dmd.lexicon import build_lexicon
 from dmd.orchestrator import JobPool
 from dmd.pipeline import SessionEngine
 from dmd.scanner import chunk_docs, scan_folder
-from dmd.triggers import detect_trigger
 from dmd.types import Utterance
 
 CAMPAIGN = str(ROOT / "tests" / "e2e" / "campaign")
@@ -34,11 +31,6 @@ async def main() -> None:
     cfg.agent.agent_timeout_s = 180.0  # generous: 4b is slow under current GPU load
     cfg.agent.max_tool_calls = 8
     gw = Gateway(cfg)
-
-    # warmup so the card isn't paying for a cold slot
-    t0 = time.time()
-    await detect_trigger(gw, "warmup call")
-    print(f"warmup classifier: {time.time()-t0:.1f}s")
 
     store = IndexStore(INDEX)
     if store.counts()["docs"] == 0:

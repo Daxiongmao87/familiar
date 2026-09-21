@@ -27,9 +27,14 @@ def test_partial_visible_before_final_and_replaced_after_attribution(stack):
         page.screenshot(path=str(shots / "streaming-partial.png"), full_page=True)
         stack.bus.publish_sync({"type": "transcript_partial", "user_id": "browser_mixed",
                                 "text": ""})
-        stack.bus.publish_sync({"type": "transcript", "user_id": "player-1",
+        stack.bus.publish_sync({"type": "transcript", "id": "line-1", "user_id": "player-1",
                                 "name": "Mira", "text": "I search the goblin corpse"})
         expect(partial).to_have_count(0)
         expect(page.locator('[data-testid="transcript-line"]')).to_have_count(1)
         expect(page.locator('[data-testid="transcript-line"]')).to_contain_text("Mira")
+        stack.bus.publish_sync({"type": "transcript_revision", "id": "line-1",
+                                "user_id": "player-2", "name": "Kael",
+                                "attribution": {"state": "contextual_review"}})
+        expect(page.locator('[data-testid="transcript-line"]')).to_contain_text("Kael")
+        page.screenshot(path=str(shots / "streaming-attribution-revision.png"), full_page=True)
         page.screenshot(path=str(shots / "streaming-final.png"), full_page=True)

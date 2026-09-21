@@ -28,10 +28,12 @@ class Utterance:
     t_end: float
     raw_text: str | None = None  # pre-correction transcript if available
     name: str | None = None  # display name from the speaking tracker (§7a)
+    transcript_id: str | None = None  # stable ID for attribution revisions
+    attribution: dict[str, Any] = field(default_factory=dict)
 
 
 class Priority(int, Enum):
-    """Scene priority levels for the live fast-lane trigger router."""
+    """Scene priority levels for OpenJEV-routed live work."""
     AMBIENT = 0
     TRIGGER = 1
     MANUAL = 2

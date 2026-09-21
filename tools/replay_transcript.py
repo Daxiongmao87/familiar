@@ -10,7 +10,6 @@ Model overrides are CLI flags so live runs never require editing config::
 
     python tools/replay_transcript.py \\
         tests/regression/golden/cr2e2_3h14m29s_crownsguard.json \\
-        --openjev \\
         --synthesis-base-url http://192.168.0.200:8080/v1 \\
         --synthesis-model minicpm5-2b
 """
@@ -53,19 +52,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="dispatch back-to-back instead of wall-clock paced",
     )
-    p.add_argument(
-        "--openjev",
-        action="store_true",
-        help="enable the openjev deploy/wait gate for this run",
-    )
     p.add_argument("--openjev-url", default=None, help="openjev-serve base URL")
     p.add_argument("--openjev-threshold", type=float, default=None)
     p.add_argument("--openjev-debounce", type=float, default=None, help="same-kind redeploy window seconds")
-    p.add_argument(
-        "--directed",
-        action="store_true",
-        help="use the JEV-routed deterministic worker instead of the agent loop",
-    )
     p.add_argument("--max-concurrent", type=int, default=None, help="pool concurrency override")
     p.add_argument("--synthesis-base-url", default=None)
     p.add_argument("--synthesis-model", default=None)
@@ -154,21 +143,16 @@ async def _amain(args: argparse.Namespace) -> int:
         cfg.models.fast.base_url = args.fast_base_url
     if args.fast_model and cfg.models.fast is not None:
         cfg.models.fast.model_id = args.fast_model
-    if args.openjev:
-        cfg.openjev.enabled = True
     if args.openjev_url:
         cfg.openjev.base_url = args.openjev_url
     if args.openjev_threshold is not None:
         cfg.openjev.threshold = args.openjev_threshold
     if args.openjev_debounce is not None:
         cfg.openjev.debounce_s = args.openjev_debounce
-    if args.directed:
-        cfg.openjev.directed_worker = True
     if args.max_concurrent is not None:
         cfg.orchestration.max_concurrent = args.max_concurrent
     print(
-        f"trigger={'openjev@' + cfg.openjev.base_url if cfg.openjev.enabled else 'legacy'} "
-        f"worker={'directed' if cfg.openjev.directed_worker else 'agent'} "
+        f"trigger=openjev@{cfg.openjev.base_url} worker=jev "
         f"debounce_s={cfg.openjev.debounce_s} max_concurrent={cfg.orchestration.max_concurrent} "
         f"synthesis={cfg.models.synthesis.model_id}@{cfg.models.synthesis.base_url}",
         flush=True,

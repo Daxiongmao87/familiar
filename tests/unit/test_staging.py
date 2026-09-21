@@ -189,7 +189,7 @@ class _NoPool:
 
 
 class _RecordingAgent:
-    """Replaces engine._agent: records every run() call, returns a canned card."""
+    """Replaces engine._jev_worker and records each deterministic run."""
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -236,7 +236,7 @@ async def test_prediction_to_injection_round_trip(tmp_path: Any) -> None:
     events: list[dict] = []
     engine = _engine(tmp_path, embedder, store, gw=object(), events=events)
     stub = _RecordingAgent()
-    engine._agent = stub  # type: ignore[assignment]
+    engine._jev_worker = stub  # type: ignore[assignment]
 
     # 1) prediction tick -> engine schedules background prefetch for the entity
     await engine._on_predict(["Brother Alric"])
@@ -268,7 +268,7 @@ async def test_cache_miss_does_not_block_normal_path(tmp_path: Any) -> None:
     embedder = _VecEmbedder()
     engine = _engine(tmp_path, embedder, store, gw=object())
     stub = _RecordingAgent()
-    engine._agent = stub  # type: ignore[assignment]
+    engine._jev_worker = stub  # type: ignore[assignment]
 
     # Fresh engine: the cache is empty, so a trigger naming entities must NOT
     # touch the embedder or the store, must hand the agent an empty staged

@@ -42,7 +42,6 @@ def _cfg(synth_provider: str = "remote", jev_provider: str = "remote") -> Any:
                 "stt": {},
             },
             "openjev": {
-                "enabled": True,
                 "provider": jev_provider,
                 "base_url": REMOTE_JEV,
             },
@@ -157,7 +156,7 @@ async def test_gateway_without_router_ignores_provider_flag() -> None:
         return httpx.Response(200, json={"choices": [{"message": {"content": "x"}}]})
 
     cfg = _cfg("local", "remote")
-    gw = Gateway(cfg)  # no router: legacy path
+    gw = Gateway(cfg)  # no provider router
     gw._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     await gw.chat("synthesis", [{"role": "user", "content": "hi"}])
     assert seen["url"] == REMOTE_SYNTH + "/chat/completions"
@@ -221,3 +220,35 @@ def test_engine_apply_providers_repoints_gate() -> None:
     assert eff["synthesis"] == BRIDGE
     assert eff["jev"] == JEV_LOCAL
     assert engine._openjev_gate._base_url == JEV_LOCAL
+
+
+def test_obsolete_false_flags_cannot_disable_jev_pipeline() -> None:
+    """Old configs cannot reactivate the removed trigger/worker bypasses."""
+    from dmd.pipeline import SessionEngine
+
+    cfg = _cfg("remote", "remote")
+    # Pydantic ignores these obsolete input keys during migration. They are
+    # deliberately absent from OpenjevConfig and cannot affect composition.
+    raw = cfg.model_dump()
+    raw["openjev"]["enabled"] = False
+    raw["openjev"]["directed_worker"] = False
+    migrated = load_config_dict(raw)
+
+    class _Pool:
+        async def submit(self, job, work) -> None:
+            return None
+
+    engine = SessionEngine(
+        cfg=migrated,
+        store=None,
+        gw=None,
+        entries=[],
+        embedder=None,
+        pool=_Pool(),
+        on_event=lambda event: None,
+        project_path="/tmp/fam-test",
+    )
+    assert isinstance(engine._openjev_gate, OpenjevGate)
+    assert engine._jev_worker.gate is engine._openjev_gate
+    assert not hasattr(migrated.openjev, "enabled")
+    assert not hasattr(migrated.openjev, "directed_worker")

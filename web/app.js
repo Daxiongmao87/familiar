@@ -137,10 +137,17 @@
     return out.join('\n');
   }
 
-  function addTranscript(userId, text, name) {
+  function addTranscript(userId, text, name, transcriptId, attribution) {
     const div = document.createElement('div');
     div.setAttribute('data-testid', 'transcript-line');
     div.className = 'transcript-line';
+    if (transcriptId) div.setAttribute('data-transcript-id', transcriptId);
+    const initial = attribution || {};
+    if (Number.isInteger(initial.revision)) {
+      div.dataset.revision = String(initial.revision);
+    }
+    if (initial.state) div.dataset.attributionState = initial.state;
+    applyProvisional(div, initial);
 
     const dot = document.createElement('span');
     dot.className = 'user-dot';
@@ -161,6 +168,44 @@
     transcriptPane.appendChild(div);
     transcriptPane.scrollTop = transcriptPane.scrollHeight;
     return div;
+  }
+
+  function applyProvisional(row, attribution) {
+    const state = attribution.state || '';
+    const provisional = attribution.provisional === true
+      || attribution.low_confidence === true
+      || (state !== '' && state !== 'certain');
+    row.classList.toggle('provisional', provisional);
+    row.dataset.provisional = provisional ? 'true' : 'false';
+    if (state !== '' && state !== 'certain') {
+      row.title = 'Speaker attribution: ' + state + ' (provisional)';
+    } else if (provisional) {
+      row.title = 'Speaker attribution provisional';
+    } else {
+      row.title = '';
+    }
+  }
+
+  function reviseTranscript(msg) {
+    if (!msg.id) return;
+    const row = transcriptPane.querySelector('[data-transcript-id="' + msg.id + '"]');
+    if (!row) return;
+    const attribution = msg.attribution || {};
+    // Reject stale revisions: rolling review emits out of order under
+    // backpressure, so only a newer revision may rewrite the row. Events
+    // without a revision (older senders) still apply.
+    const incoming = Number.isInteger(attribution.revision) ? attribution.revision : null;
+    const current = row.dataset.revision === undefined || row.dataset.revision === ''
+      ? null : parseInt(row.dataset.revision, 10);
+    if (incoming !== null && current !== null && incoming <= current) return;
+    if (incoming !== null) row.dataset.revision = String(incoming);
+    const userId = msg.user_id || '';
+    const who = row.querySelector('.user-id');
+    const dot = row.querySelector('.user-dot');
+    if (who) who.textContent = msg.name || playerLabel(userId) || '';
+    if (dot) dot.style.backgroundColor = 'hsl(' + hueFor(userId) + ', 70%, 60%)';
+    row.dataset.attributionState = attribution.state || '';
+    applyProvisional(row, attribution);
   }
 
   /** Update the current utterance while audio is still arriving. */
@@ -354,7 +399,10 @@
         updatePartial(msg.user_id || '', msg.text || '');
         break;
       case 'transcript':
-        addTranscript(msg.user_id || '', msg.text || '', msg.name || '');
+        addTranscript(msg.user_id || '', msg.text || '', msg.name || '', msg.id || '', msg.attribution || null);
+        break;
+      case 'transcript_revision':
+        reviseTranscript(msg);
         break;
       case 'card':
         if (msg.card) addCard(msg.card);

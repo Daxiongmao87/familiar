@@ -176,6 +176,9 @@ body {
 
 .transcript-line:hover { background: var(--bg-elev); }
 
+/* Rolling review: inferred speaker labels are provisional until revised. */
+.transcript-line.provisional .user-id { font-style: italic; opacity: 0.75; }
+
 .user-dot {
   flex: 0 0 auto;
   width: 8px;

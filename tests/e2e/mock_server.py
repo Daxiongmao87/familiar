@@ -2,7 +2,8 @@
 
 Scripted behavior, no randomness:
   GET  /v1/models                      -> lists mock-synthesis / mock-fast / mock-embed
-  POST /v1/chat/completions            -> card JSON for synthesis role, classifier JSON for fast
+  POST /v1/chat/completions            -> card JSON for synthesis role
+  POST /score                          -> deterministic OpenJEV decisions
   POST /v1/embeddings                  -> stable hash-derived vectors, dim 8
   GET  /v1/_mock/requests              -> recorded request log for assertions
 
@@ -49,7 +50,13 @@ def _content_of(req: dict[str, Any]) -> str:
 
 def _card_json(user_text: str) -> dict[str, Any]:
     lowered = user_text.lower()
-    if "search" in lowered or "loot" in lowered:
+    if "rule" in lowered or "grapple" in lowered:
+        body = "**Grappled** (SRD 5.1): speed 0, ends if grappler conditions break."
+        title = "Rules — Grappled Condition"
+    elif "history" in lowered or "lore" in lowered:
+        body = "The Ashforge lies east of the temple square, where Vex'ahlia's seal was found."
+        title = "Lore Brief"
+    elif "search" in lowered or "loot" in lowered:
         body = (
             "## Loot Table — Fallen Scout\n\n"
             "| Skill | DC | On Success |\n|---|---|---|\n"
@@ -59,9 +66,6 @@ def _card_json(user_text: str) -> dict[str, Any]:
             "**Passive Insight 15+** — the note bears Vex'ahlia's seal."
         )
         title = "Loot Table — Fallen Scout"
-    elif "rule" in lowered or "grapple" in lowered:
-        body = "**Grappled** (SRD 5.1): speed 0, ends if grappler conditions break."
-        title = "Rules — Grappled Condition"
     else:
         body = "The forge district lies east of the temple square."
         title = "Lore Brief"
@@ -95,16 +99,7 @@ def create_mock_app(state: MockState | None = None) -> FastAPI:
             props = sorted((schema.get("schema", {}).get("properties") or {}).keys())
         else:
             props = []
-        if "is_trigger" in props:
-            # Fast-lane classifier: binary verdict, no taxonomy.
-            text = _content_of(req).lower()
-            if any(w in text for w in ("search", "loot", "examine", "inspect")):
-                content = json.dumps({"is_trigger": True})
-            elif any(w in text for w in ("history", "lore", "who is", "what is", "background", "tell me")):
-                content = json.dumps({"is_trigger": True})
-            else:
-                content = json.dumps({"is_trigger": False})
-        elif "fast" in model:
+        if "fast" in model:
             # Agent ephemeral tier (fast role, free-form): grounded scene note.
             content = json.dumps(
                 {
@@ -126,6 +121,33 @@ def create_mock_app(state: MockState | None = None) -> FastAPI:
                 ],
             }
         )
+
+    @app.post("/score")
+    async def score(request: Request) -> dict[str, Any]:
+        """Deterministic OpenJEV wire-compatible scorer for full-path tests."""
+        row = await request.json()
+        state.record("/score", row)
+        ids = [str(option["id"]) for option in row.get("options", [])]
+        state_text = str(row.get("state", ""))
+        text = state_text.splitlines()[-1].lower() if state_text else ""
+        if ids == ["deploy", "wait"]:
+            deploy = any(
+                word in text
+                for word in ("search", "loot", "history", "lore", "grapple", "rules")
+            )
+            probabilities = [0.9, 0.1] if deploy else [0.1, 0.9]
+        elif ids == ["card", "ephemeral"]:
+            probabilities = [0.9, 0.1]
+        elif ids == ["offline", "online", "both"]:
+            probabilities = [0.1, 0.1, 0.8]
+        else:
+            probability = 1.0 / max(len(ids), 1)
+            probabilities = [probability for _ in ids]
+        return {
+            "id": row.get("id", "mock"),
+            "option_ids": ids,
+            "probabilities": probabilities,
+        }
 
     @app.post("/v1/embeddings")
     async def embeddings(request: Request) -> dict[str, Any]:

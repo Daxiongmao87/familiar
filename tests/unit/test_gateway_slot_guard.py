@@ -23,7 +23,6 @@ import pytest
 from dmd.config import load_config_dict
 from dmd.gateway import ROLE_DEFAULT_MAX_TOKENS, Gateway, GatewayError
 from dmd.monitor import TranscriptMonitor
-from dmd.triggers import detect_trigger
 
 
 def _cfg_dict(**over: Any) -> dict:
@@ -113,21 +112,9 @@ async def test_chat_endpoint_request_timeout_shortens_read_window() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Call-site audit: the two callers that leaked slots today, plus the guard
-# applied to every gw.chat through the real Gateway body-builder.
+# Call-site audit: monitor calls plus the guard applied to every gw.chat
+# through the real Gateway body-builder.
 # ---------------------------------------------------------------------------
-
-
-async def test_trigger_classifier_call_sends_max_tokens() -> None:
-    """The fast-lane LLM is consulted only when the regex is silent, and that
-    call must still be generation-capped (slot-leak guard)."""
-    from dmd.triggers import LANE_CLASSIFY_MAX_TOKENS
-
-    captured: dict[str, Any] = {}
-    gw = _gw(_chat_handler(captured))
-    # prose with no search/loot/examine keyword -> regex silent -> LLM consulted
-    await detect_trigger(gw, "the fog rolls in over the harbour")
-    assert captured["body"]["max_tokens"] == LANE_CLASSIFY_MAX_TOKENS
 
 
 async def test_monitor_judge_call_sends_max_tokens() -> None:

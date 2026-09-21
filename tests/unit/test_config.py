@@ -325,3 +325,61 @@ def test_generation_roles_pin_minicpm5_2b():
         if banned_rx.search((root / doc).read_text(encoding="utf-8")):
             offenders.append(doc)
     assert not offenders, "prior-model references survive in:\n" + "\n".join(offenders)
+
+
+# ---------------------------------------------------------------------------
+# discord snowflake IDs: YAML integer normalization (regression)
+# ---------------------------------------------------------------------------
+
+def _minimal_models() -> dict:
+    """Minimal valid models mapping shared by the snowflake tests."""
+    return {
+        "synthesis": {"base_url": "http://x", "model_id": "m"},
+        "stt": {},
+    }
+
+
+def test_discord_integer_ids_from_yaml_file_normalize_to_str(tmp_path):
+    """Unquoted snowflake IDs parse as YAML ints; load_config normalizes them."""
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(
+        "models:\n"
+        "  synthesis:\n"
+        "    base_url: http://x\n"
+        "    model_id: m\n"
+        "  stt: {}\n"
+        "discord:\n"
+        "  guild_id: 123456789012345678\n"
+        "  channel_id: 234567890123456789\n"
+        "  dm_user_id: 345678901234567890\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(str(cfg_file))
+    assert cfg.discord.guild_id == "123456789012345678"
+    assert cfg.discord.channel_id == "234567890123456789"
+    assert cfg.discord.dm_user_id == "345678901234567890"
+
+
+def test_discord_string_ids_and_none_preserved():
+    """Quoted snowflake IDs pass through; omitted/None IDs stay None."""
+    cfg = load_config_dict({
+        "models": _minimal_models(),
+        "discord": {
+            "guild_id": "123456789012345678",
+            "channel_id": None,
+        },
+    })
+    assert cfg.discord.guild_id == "123456789012345678"
+    assert cfg.discord.channel_id is None
+    assert cfg.discord.dm_user_id is None
+
+
+@pytest.mark.parametrize("field", ["guild_id", "channel_id", "dm_user_id"])
+@pytest.mark.parametrize("bad", [True, 1.5, ["123"], {"id": "123"}])
+def test_discord_invalid_id_types_rejected(field, bad):
+    """Non-string, non-integer snowflake IDs raise ConfigError (no broad coerce)."""
+    with pytest.raises(ConfigError):
+        load_config_dict({
+            "models": _minimal_models(),
+            "discord": {field: bad},
+        })

@@ -4,7 +4,7 @@ Proves:
   * pause-capture drops intake audio (no transcript) and emits capture_state,
     and resume restores flow;
   * mark-OOC keeps the transcript flowing (event log is truth) but stops the
-    fast-lane trigger and the proactive monitor, and emits ooc_state;
+    OpenJEV dispatch and the proactive monitor, and emits ooc_state;
   * the /api/capture, /api/ooc, /api/card/done endpoints drive the engine;
   * /api/status reports the control state;
   * _card_to_dict preserves status + player_ids (§9) for the UI.
@@ -18,6 +18,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from dmd.config import load_config_dict
+from dmd.openjev import OpenjevDecision
 from dmd.pipeline import SessionEngine
 from dmd.server import _card_to_dict, create_app
 from dmd.types import Card, Utterance
@@ -49,7 +50,7 @@ def _engine(tmp_path: Any, gw: Any, pool: Any, events: list[dict]) -> SessionEng
             },
         }
     )
-    return SessionEngine(
+    engine = SessionEngine(
         cfg=cfg,
         store=None,  # type: ignore[arg-type]
         gw=gw,
@@ -59,6 +60,18 @@ def _engine(tmp_path: Any, gw: Any, pool: Any, events: list[dict]) -> SessionEng
         on_event=events.append,
         project_path=str(tmp_path),
     )
+    engine._openjev_gate = _DeployGate()  # type: ignore[assignment]
+    return engine
+
+
+class _DeployGate:
+    """Instant semantic deploy verdict; these tests isolate session controls."""
+
+    async def decide(self, lines: list[str]) -> OpenjevDecision:
+        return OpenjevDecision(True, 0.9, tier="card")
+
+    async def aclose(self) -> None:
+        return None
 
 
 # -- engine: pause-capture ---------------------------------------------------

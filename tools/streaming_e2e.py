@@ -41,14 +41,7 @@ class NoPool:
         return None
 
 
-async def _no_trigger(gw, text):
-    return False, "none"
-
-
 async def main() -> None:
-    import dmd.pipeline as pipe
-    pipe.detect_trigger = _no_trigger  # no card generation; STT path only
-
     cfg = load_config_dict(
         {
             "project": {"path": "/tmp/fam-test"},

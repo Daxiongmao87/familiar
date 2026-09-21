@@ -1,15 +1,14 @@
 """Full-pipeline agentic E2E: replay a scripted Discord session through the
 real stack and assert the agentic outputs are grounded for the right triggers.
 
-This exercises the FULL path, not just the UI: every line goes through
-``SessionEngine.handle_utterance`` -> ``detect_trigger`` (the fast-lane
-binary verdict) -> ``WorkerAgent``. The guarantees under test:
+This exercises the full path, not just the UI: every line goes through
+``SessionEngine.handle_utterance`` -> ``OpenjevGate`` -> ``JevWorker``.
+The guarantees under test:
 
   * a loot trigger produces a grounded CARD (skill/DC table);
-  * a lore trigger produces a grounded CARD (briefing) — the legacy path
-    defaults every trigger to the card tier (recall bias; no taxonomy);
+  * a lore trigger produces a grounded artifact;
   * a non-trigger line produces nothing;
-  * the fast lane was actually invoked (the classifier ran).
+  * OpenJEV was actually invoked.
 
 The deterministic mock backend stands in for the models; its cards
 reference real campaign content (Vex'ahlia / the Ashforge), so "grounded"
@@ -60,7 +59,7 @@ async def test_agentic_session_grounds_outputs_for_right_triggers(stack: Any) ->
     async def _no_web_results(args: dict) -> dict:
         return {"results": [], "note": "stubbed empty for hermetic routing"}
 
-    engine._agent._tool_web_search = _no_web_results  # type: ignore[method-assign]
+    engine._jev_worker._tool_web_search = _no_web_results  # type: ignore[method-assign]
 
     # Replay the session. handle_utterance only awaits queueing, so drain
     # before close: close() cancels still-queued jobs.
@@ -90,15 +89,9 @@ async def test_agentic_session_grounds_outputs_for_right_triggers(stack: Any) ->
     scene_notes = [e for e in events if e.get("type") == "scene_context"]
     assert scene_notes == [], f"expected no scene notes, got {scene_notes}"
 
-    # 4. The fast lane was actually used: the classifier was invoked on the fast role.
-    fast_classifier_calls = [
-        r
-        for r in stack.state.requests
-        if r["path"] == "/v1/chat/completions"
-        and "fast" in str(r["body"].get("model", ""))
-        and "response_format" in r["body"]
-    ]
-    assert fast_classifier_calls, "the fast-lane classifier was never invoked"
+    # 4. The sole trigger authority was actually invoked.
+    gate_calls = [r for r in stack.state.requests if r["path"] == "/score"]
+    assert gate_calls, "OpenJEV was never invoked"
 
 
 @pytest.mark.e2e
@@ -129,8 +122,8 @@ async def test_empty_agent_output_produces_no_scene_context(stack: Any) -> None:
     async def _run_empty(task, tier, trigger_portion="", transcript=""):
         return AgentResult(tier=tier, text="", error="simulated empty output")
 
-    original_run = engine._agent.run
-    engine._agent.run = _run_empty
+    original_run = engine._jev_worker.run
+    engine._jev_worker.run = _run_empty
     try:
         await engine._generate_card(
             {
@@ -141,7 +134,7 @@ async def test_empty_agent_output_produces_no_scene_context(stack: Any) -> None:
             }
         )
     finally:
-        engine._agent.run = original_run
+        engine._jev_worker.run = original_run
 
     await pool.close()
 

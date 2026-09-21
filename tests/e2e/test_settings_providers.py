@@ -19,6 +19,10 @@ def test_settings_save_applies_providers_live(stack) -> None:
         page.wait_for_selector("#conn-dot.on", timeout=15000)
         page.click("#settings-btn", timeout=5000)
         page.wait_for_selector("#settings-panel", timeout=5000)
+        page.wait_for_function(
+            "() => (document.getElementById('cfg-jev-base').value || '').length > 0",
+            timeout=10000,
+        )
         page.select_option("#cfg-syn-provider", "remote")
         page.select_option("#cfg-jev-provider", "remote")
         page.locator("#cfg-jev-base").fill("http://127.0.0.1:8299")

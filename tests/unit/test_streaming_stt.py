@@ -58,7 +58,7 @@ def _engine(port: int, tmp_path: Any, on_event: Any) -> SessionEngine:
 
 async def test_streaming_final_dispatches_through_engine(tmp_path: Any) -> None:
     """Partial publishes an ephemeral event; the final dispatches exactly
-    one transcript through attribution + publish + fast lane."""
+    one transcript through attribution, publication, and OpenJEV."""
     events: list[dict] = []
 
     async def _server(

@@ -14,6 +14,7 @@ from dmd.attribution import (
     AttributedSegment,
     attribute_segments,
     attribute_whole,
+    attribute_whole_evidence,
     group_by_speaker,
 )
 from dmd.speaking_tracker import SpeakingTracker
@@ -93,6 +94,28 @@ def test_attribute_whole_no_signal_falls_back() -> None:
     uid, name = attribute_whole(tr, 42.0, 43.0, "browser_mixed")
     assert uid == "browser_mixed"
     assert name is None
+
+
+def test_evidence_reports_certain_assignment_without_probability_claim() -> None:
+    tr = _tracker_with_windows()
+    result = attribute_whole_evidence(tr, 3.5, 5.5, "browser_mixed")
+    assert result.user_id == "222"
+    assert result.state == "certain"
+    assert result.coverage == 1.0
+    assert result.margin == 1.0
+    assert result.candidates == {"222": 2.0}
+
+
+def test_evidence_preserves_mixed_capture_on_near_tied_crosstalk() -> None:
+    tr = SpeakingTracker()
+    tr.on_speaking("sam", True, t=0)
+    tr.on_speaking("sam", False, t=0.7)
+    tr.on_speaking("matt", True, t=0.1)
+    tr.on_speaking("matt", False, t=0.8)
+    result = attribute_whole_evidence(tr, 0, 1, "browser_mixed")
+    assert result.user_id == "browser_mixed"
+    assert result.state == "ambiguous"
+    assert result.candidates == {"sam": 0.7, "matt": 0.7}
 
 
 def test_attribution_survives_absent_tracker() -> None:

@@ -132,7 +132,7 @@ def test_mock_embeddings_are_stable(stack) -> None:
 def test_streaming_final_flows_through_stack_engine(stack) -> None:
     """A scripted final from a fake streaming TCP server flows through
     consume_source on the fully wired stack engine and lands on the bus
-    as a transcript (then through the fast lane to a mock-backed card).
+    as a transcript (then through OpenJEV to a mock-backed card).
     """
     import asyncio
     import json

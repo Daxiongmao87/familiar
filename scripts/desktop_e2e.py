@@ -89,7 +89,7 @@ def _cfg(synth: str, jev: str, bridge_url: str, jev_url: str) -> dict:
             },
             "stt": {"stream_host": "127.0.0.1", "stream_port": 1},
         },
-        "openjev": {"enabled": True, "provider": jev, "base_url": jev_url + "-remote"},
+        "openjev": {"provider": jev, "base_url": jev_url + "-remote"},
         "desktop": {"enabled": True, "bridge_url": bridge_url, "jev_local_url": jev_url},
     }
 
@@ -183,7 +183,7 @@ def _backend_boot(report: Report) -> None:
             "  synthesis:\n    provider: remote\n"
             "    base_url: http://127.0.0.1:9/v1\n    model_id: m\n"
             "  stt:\n    stream_host: 127.0.0.1\n    stream_port: 1\n"
-            "openjev:\n  enabled: false\n"
+            "openjev:\n  base_url: http://127.0.0.1:9\n"
             "server:\n  host: 127.0.0.1\n  port: " + str(port) + "\n",
             encoding="utf-8",
         )

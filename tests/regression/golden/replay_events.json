@@ -1,13 +1,65 @@
 [
   {
+    "t": 0.0,
+    "text": "",
+    "type": "transcript_partial",
+    "user_id": "dm"
+  },
+  {
+    "attribution": {
+      "candidates": {},
+      "context_version": 1,
+      "coverage": 0.0,
+      "history": [
+        {
+          "context": 1,
+          "reason": "initial_timing",
+          "revision": 0,
+          "state": "unknown",
+          "user_id": "dm"
+        }
+      ],
+      "low_confidence": true,
+      "margin": 0.0,
+      "original": {
+        "candidates": {},
+        "coverage": 0.0,
+        "margin": 0.0,
+        "name": null,
+        "state": "unknown",
+        "user_id": "dm"
+      },
+      "provisional": true,
+      "revision": 0,
+      "score_history": [],
+      "source": "discord_speaking_overlap",
+      "source_user_id": "dm",
+      "state": "unknown"
+    },
     "t": 1.0,
     "text": "I search the body",
     "type": "transcript",
     "user_id": "dm"
   },
   {
+    "debounced": false,
+    "deploy": true,
+    "error": null,
+    "p_deploy": 0.9,
+    "t": 0.0,
+    "text": "I search the body",
+    "type": "trigger_verdict",
+    "user_id": "dm"
+  },
+  {
     "detect_ms": 0.0,
     "lane_ms": 0.0,
+    "openjev": {
+      "error": null,
+      "p_deploy": 0.9,
+      "p_tier": 0.0,
+      "tier": "card"
+    },
     "t": 0.0,
     "text": "I search the body",
     "tier": "card",
@@ -24,9 +76,55 @@
     "user_id": "dm"
   },
   {
+    "t": 0.0,
+    "text": "",
+    "type": "transcript_partial",
+    "user_id": "alice"
+  },
+  {
+    "attribution": {
+      "candidates": {},
+      "context_version": 2,
+      "coverage": 0.0,
+      "history": [
+        {
+          "context": 2,
+          "reason": "initial_timing",
+          "revision": 0,
+          "state": "unknown",
+          "user_id": "alice"
+        }
+      ],
+      "low_confidence": true,
+      "margin": 0.0,
+      "original": {
+        "candidates": {},
+        "coverage": 0.0,
+        "margin": 0.0,
+        "name": null,
+        "state": "unknown",
+        "user_id": "alice"
+      },
+      "provisional": true,
+      "revision": 0,
+      "score_history": [],
+      "source": "discord_speaking_overlap",
+      "source_user_id": "alice",
+      "state": "unknown"
+    },
     "t": 2.0,
     "text": "never mind, rough luck there",
     "type": "transcript",
+    "user_id": "alice"
+  },
+  {
+    "debounced": false,
+    "deploy": false,
+    "error": null,
+    "p_deploy": 0.1,
+    "t": 0.0,
+    "text": "never mind, rough luck there",
+    "type": "trigger_verdict",
     "user_id": "alice"
   },
   {
@@ -49,7 +147,7 @@
         "items": [],
         "sources": [],
         "tier": "card",
-        "tool_calls": 0
+        "tool_calls": 6
       },
       "player_ids": [],
       "status": "active",
@@ -69,7 +167,7 @@
         "items": [],
         "sources": [],
         "tier": "card",
-        "tool_calls": 1
+        "tool_calls": 6
       },
       "player_ids": [],
       "status": "active",

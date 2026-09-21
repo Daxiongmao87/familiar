@@ -22,7 +22,7 @@ models:
     # exceeds agent_timeout_s and errors. Use a fast model for responsive cards,
     # or keep a slow model and raise agent_timeout_s for quality-over-latency.
     extra_body: { enable_thinking: false }   # free-form JSON; disable thinking for fast models
-  fast:                          # optional: per-utterance classification
+  fast:                          # optional: background monitoring/prediction
     base_url: http://localhost:8081/v1
     api_key: null
     model_id: minicpm5-2b
@@ -61,15 +61,33 @@ staging:
   max_predicted: 6               # cap predictions prefetched per monitor tick
   max_inject_chars: 6000         # ceiling on the injected staged block
 
-openjev:                        # optional: binary deploy/wait trigger gate
-  enabled: false                 # off = legacy regex + fast-LLM trigger path
+openjev:                        # required: sole binary deploy/wait trigger gate
   provider: remote               # remote = base_url below; local = JEV sidecar
   base_url: http://127.0.0.1:8199  # openjev-serve /score endpoint
   threshold: 0.5                 # P(deploy) at or above this deploys a worker
   timeout_s: 3.0                 # per scoring call; failures fail closed to wait
   recent_n: 8                    # transcript lines in the gate state window
   debounce_s: 30.0               # redeploy suppression window in seconds (0 off)
-  directed_worker: false         # JEV-routed deterministic worker (no agent loop)
+
+# Separate from the locked v39 gate. Rolling review: every new finalized
+# block advances the review context and schedules eligible PRIOR blocks for
+# bounded background re-scoring — confident timing included. It never
+# delays, dispatches, or duplicates cards.
+attribution_review:
+  enabled: true
+  min_prob: 0.75                 # winners below this are labeled low-confidence
+  max_pending: 1                 # concurrent scorer calls (waiters queue, none dropped)
+  recent_n: null                 # null = all retained preceding transcript
+  following_n: null              # null = all retained following transcript
+  max_age_blocks: 12             # blocks older than this stop being rescored
+  max_age_s: 300.0               # wall-clock stop horizon per block
+  initial_reviews: 2             # rolling passes per block as context arrives
+  max_total_reviews: 6           # lifetime passes per block (>= initial_reviews)
+  max_candidates: 6              # member options offered per review
+  history_len: 8                 # retained score distributions / history entries
+  review_timeout_s: 5.0          # per-pass scorer timeout (failures change nothing)
+  low_confidence_below: 0.6      # stability-phase revisit threshold
+  unstable_window: 3             # recent scores scanned for winner changes
 
 discord:
   token: null                    # enter the bot token during setup
